@@ -28,6 +28,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.BookEntity
 import com.example.viewmodel.MainViewModel
+import coil.compose.AsyncImage
+import androidx.compose.ui.layout.ContentScale
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -389,28 +392,49 @@ fun RecentBookRow(
                 .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Elegant Text-based cover with dynamic background gradient
-            Box(
-                modifier = Modifier
-                    .size(width = 52.dp, height = 72.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(
-                        Brush.linearGradient(
-                            colors = listOf(
-                                MaterialTheme.colorScheme.primaryContainer,
-                                MaterialTheme.colorScheme.secondary
-                            )
-                        )
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = book.title.take(1).uppercase(),
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        color = Color.White,
-                        fontWeight = FontWeight.Black
-                    )
+            // Elegant Cover Image with text fallback
+            val hasLocalCover = !book.coverLocalPath.isNullOrEmpty() && File(book.coverLocalPath).exists()
+            if (hasLocalCover) {
+                AsyncImage(
+                    model = File(book.coverLocalPath!!),
+                    contentDescription = "${book.title} Cover",
+                    modifier = Modifier
+                        .size(width = 52.dp, height = 72.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                    contentScale = ContentScale.Crop
                 )
+            } else if (!book.coverUrl.isNullOrEmpty()) {
+                AsyncImage(
+                    model = book.coverUrl,
+                    contentDescription = "${book.title} Cover",
+                    modifier = Modifier
+                        .size(width = 52.dp, height = 72.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(width = 52.dp, height = 72.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    MaterialTheme.colorScheme.primaryContainer,
+                                    MaterialTheme.colorScheme.secondary
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = book.title.take(1).uppercase(),
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            color = Color.White,
+                            fontWeight = FontWeight.Black
+                        )
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.width(16.dp))

@@ -135,8 +135,8 @@ fun AiSettingsDialog(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     val isProviderAvailable = run {
                                         if (provider.id == "gemini_cloud") {
-                                            com.example.BuildConfig.GEMINI_API_KEY.isNotEmpty() && 
-                                            com.example.BuildConfig.GEMINI_API_KEY != "MY_GEMINI_API_KEY"
+                                            val key = viewModel.userGeminiApiKey.ifBlank { com.example.BuildConfig.GEMINI_API_KEY }
+                                            key.isNotEmpty() && key != "MY_GEMINI_API_KEY"
                                         } else if (provider.id == "mediapipe_local") {
                                             gemmaExists
                                         } else {
@@ -155,7 +155,7 @@ fun AiSettingsDialog(
                                         text = when (provider.id) {
                                             "gemini_cloud" -> {
                                                 if (isProviderAvailable) "Key Configured & Active" 
-                                                else "Key Missing (Secrets Panel)"
+                                                else "Key Missing (Enter below or set in Secrets)"
                                             }
                                             "mediapipe_local" -> {
                                                 if (gemmaExists) "Gemma Model Loaded" 
@@ -171,6 +171,51 @@ fun AiSettingsDialog(
                             }
                         }
                     }
+                }
+
+                // Gemini API Key Input Field
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Cloud Gemini API Key",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Enter your custom GEMINI_API_KEY. If left blank, the app will fall back to the API key configured in the system environment.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    
+                    var apiKeyText by remember { mutableStateOf(viewModel.userGeminiApiKey) }
+                    
+                    OutlinedTextField(
+                        value = apiKeyText,
+                        onValueChange = {
+                            apiKeyText = it
+                            viewModel.updateGeminiApiKey(it)
+                        },
+                        label = { Text("Gemini API Key") },
+                        placeholder = { Text("AIzaSy...") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("gemini_api_key_input"),
+                        shape = RoundedCornerShape(8.dp),
+                        trailingIcon = {
+                            if (apiKeyText.isNotEmpty()) {
+                                IconButton(onClick = {
+                                    apiKeyText = ""
+                                    viewModel.updateGeminiApiKey("")
+                                }) {
+                                    Icon(Icons.Default.Clear, contentDescription = "Clear Key")
+                                }
+                            }
+                        }
+                    )
                 }
 
                 // Local Gemma Model Management (MediaPipe)
@@ -308,6 +353,90 @@ fun AiSettingsDialog(
                                 ) {
                                     Text("Retry")
                                 }
+                            }
+                        }
+                    }
+                }
+
+                // Premium Offline Voice (Piper TTS)
+                Divider()
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Premium Offline Voice (Piper TTS)",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Switch to a premium, deeply natural 'Audible-style' narrator that runs 100% offline. Download the lightweight open-source Piper TTS model (~25MB) to enable it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    if (viewModel.premiumVoiceDownloaded) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "ljspeech-medium.onnx loaded (Active)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Button(
+                                onClick = {
+                                    viewModel.deletePremiumVoice()
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.error
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete Voice")
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Delete")
+                            }
+                        }
+                    } else if (viewModel.premiumVoiceDownloading) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = "Downloading Voice Model: ${viewModel.premiumVoiceDownloadProgress}%",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            LinearProgressIndicator(
+                                progress = viewModel.premiumVoiceDownloadProgress / 100f,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    } else {
+                        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            if (viewModel.premiumVoiceDownloadError != null) {
+                                Text(
+                                    text = viewModel.premiumVoiceDownloadError ?: "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    viewModel.downloadPremiumVoice()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.Download, contentDescription = "Download Voice")
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Download Premium Voice (25 MB)")
                             }
                         }
                     }

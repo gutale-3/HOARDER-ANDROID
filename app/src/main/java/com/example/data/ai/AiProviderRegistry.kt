@@ -3,7 +3,12 @@ package com.example.data.ai
 import android.content.Context
 
 class AiProviderRegistry(private val context: Context) {
-    val cloudProvider = GeminiCloudProvider()
+    private val prefs = context.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
+
+    val cloudProvider = GeminiCloudProvider {
+        val userKey = prefs.getString("gemini_api_key", "") ?: ""
+        if (userKey.isNotBlank()) userKey else com.example.BuildConfig.GEMINI_API_KEY
+    }
     val localProvider = MediaPipeLocalProvider(context)
     val mlKitProvider = MlKitGenAiProvider(context)
 

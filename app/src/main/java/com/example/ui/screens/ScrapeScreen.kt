@@ -4,6 +4,7 @@ import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
@@ -566,11 +567,15 @@ fun ScrapeScreen(
         Dialog(
             onDismissRequest = { viewModel.showManualBrowser = false },
             properties = DialogProperties(
-                dismissOnBackPress = true,
+                dismissOnBackPress = !canGoBack,
                 dismissOnClickOutside = false,
                 usePlatformDefaultWidth = false
             )
         ) {
+            BackHandler(enabled = canGoBack) {
+                webViewInstance?.goBack()
+            }
+
             Surface(
                 modifier = Modifier.fillMaxSize(),
                 color = MaterialTheme.colorScheme.background

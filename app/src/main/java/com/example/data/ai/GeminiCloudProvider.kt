@@ -45,14 +45,14 @@ data class GeminiResponse(
 )
 
 interface GeminiApi {
-    @POST("v1beta/models/gemini-3.5-flash:generateContent")
+    @POST("v1beta/models/gemini-2.5-flash:generateContent")
     suspend fun generateContent(
         @Query("key") apiKey: String,
         @Body request: GeminiRequest
     ): GeminiResponse
 }
 
-class GeminiCloudProvider : AiProvider {
+class GeminiCloudProvider(private val apiKeyProvider: () -> String = { BuildConfig.GEMINI_API_KEY }) : AiProvider {
     override val id: String = "gemini_cloud"
     override val displayName: String = "Cloud Gemini"
 
@@ -73,14 +73,14 @@ class GeminiCloudProvider : AiProvider {
     }
 
     override suspend fun isAvailable(): Boolean {
-        val key = BuildConfig.GEMINI_API_KEY
+        val key = apiKeyProvider()
         return key.isNotEmpty() && key != "MY_GEMINI_API_KEY"
     }
 
     override suspend fun generate(prompt: String, jsonMode: Boolean): String = withContext(Dispatchers.IO) {
-        val key = BuildConfig.GEMINI_API_KEY
+        val key = apiKeyProvider()
         if (!isAvailable()) {
-            return@withContext "Error: Gemini API Key is missing. Please enter your GEMINI_API_KEY in the Secrets panel."
+            return@withContext "Error: Gemini API Key is missing. Please enter your GEMINI_API_KEY in the Secrets panel or AI Settings."
         }
 
         val request = GeminiRequest(

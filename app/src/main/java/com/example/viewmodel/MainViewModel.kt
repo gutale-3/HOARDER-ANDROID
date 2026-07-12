@@ -19,6 +19,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.*
 import com.example.data.repository.NovelRepository
+import com.example.data.ai.SherpaOnnxTtsEngine
 import com.example.ui.theme.AppTheme
 import com.example.util.CloudflareException
 import com.example.util.NovelCompiler
@@ -49,6 +50,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var activeAiProviderId by mutableStateOf("gemini_cloud")
         private set
 
+    var userGeminiApiKey by mutableStateOf("")
+        private set
+
     val aiRegistry = com.example.data.ai.AiProviderRegistry(application)
     val modelManager = com.example.data.ai.ModelManager(application)
 
@@ -58,7 +62,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         readerFontSize = prefs.getInt("reader_font_size", 18)
         defaultUserAgent = prefs.getString("user_agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36") ?: ""
         activeAiProviderId = prefs.getString("active_ai_provider", "gemini_cloud") ?: "gemini_cloud"
+        userGeminiApiKey = prefs.getString("gemini_api_key", "") ?: ""
         registerTtsReceiver()
+    }
+
+    fun updateGeminiApiKey(key: String) {
+        userGeminiApiKey = key
+        prefs.edit().putString("gemini_api_key", key).apply()
     }
 
     fun updateActiveAiProvider(providerId: String) {
@@ -497,6 +507,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var ttsSpeed by mutableStateOf(1.0f)
     var ttsActiveParagraphIndex by mutableStateOf<Int?>(-1)
 
+    // Premium Piper offline voice properties
+    val sherpaOnnxTtsEngine = SherpaOnnxTtsEngine(getApplication())
+    var premiumVoiceDownloaded by mutableStateOf(sherpaOnnxTtsEngine.isModelDownloaded())
+        private set
+    var premiumVoiceDownloading by mutableStateOf(false)
+        private set
+    var premiumVoiceDownloadProgress by mutableStateOf(0)
+        private set
+    var premiumVoiceDownloadError by mutableStateOf<String?>(null)
+        private set
+
+    fun downloadPremiumVoice() {
+        if (premiumVoiceDownloaded || premiumVoiceDownloading) return
+        premiumVoiceDownloading = true
+        premiumVoiceDownloadError = null
+        viewModelScope.launch(Dispatchers.Main) {
+            sherpaOnnxTtsEngine.downloadModel(
+                onProgress = { progress ->
+                    premiumVoiceDownloadProgress = progress
+                },
+                onSuccess = {
+                    premiumVoiceDownloaded = true
+                    premiumVoiceDownloading = false
+                    initTts()
+                    addLog("Premium Offline Voice (Piper) downloaded successfully.")
+                },
+                onFailure = { error ->
+                    premiumVoiceDownloadError = error
+                    premiumVoiceDownloading = false
+                    addLog("Error downloading Premium Offline Voice: $error")
+                }
+            )
+        }
+    }
+
+    fun deletePremiumVoice() {
+        if (sherpaOnnxTtsEngine.deleteModel()) {
+            premiumVoiceDownloaded = false
+            if (selectedVoiceId == "premium_piper") {
+                val defaultVoice = ttsVoices.find { it.id.startsWith("default_") } ?: ttsVoices.firstOrNull()
+                defaultVoice?.let { setTtsVoice(it) }
+            }
+            initTts()
+            addLog("Premium Offline Voice (Piper) model file deleted.")
+        }
+    }
+
     // Sleep Timer state
     var sleepTimerMinutes by mutableStateOf(0) // 0 means Never / Off
     var sleepTimerRemainingSeconds by mutableStateOf<Int?>(null)
@@ -679,7 +736,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     availableVoices.add(VoiceOption("default_system", "System Default", Locale.getDefault()))
                 }
                 
-                ttsVoices = availableVoices.distinctBy { it.id }
+                var finalVoices = availableVoices.distinctBy { it.id }
+                if (premiumVoiceDownloaded) {
+                    finalVoices = listOf(VoiceOption("premium_piper", "Premium Offline Voice (Piper TTS)", Locale.US)) + finalVoices
+                }
+                ttsVoices = finalVoices
 
                 val savedVoice = prefs.getString("tts_selected_voice", "") ?: ""
                 if (savedVoice.isNotEmpty()) {
@@ -705,7 +766,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setTtsVoice(voiceOption: VoiceOption) {
         selectedVoiceId = voiceOption.id
         prefs.edit().putString("tts_selected_voice", voiceOption.id).apply()
-        if (voiceOption.id.startsWith("default_")) {
+        if (voiceOption.id == "premium_piper") {
+            // Handled internally by the premium voice synthesizer
+        } else if (voiceOption.id.startsWith("default_")) {
             tts?.setLanguage(voiceOption.locale)
         } else {
             try {
@@ -778,6 +841,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun speak(text: String, book: BookEntity, chapter: ChapterEntity, startFromParagraphIndex: Int = -1) {
+        if (selectedVoiceId == "premium_piper" && premiumVoiceDownloaded) {
+            viewModelScope.launch(Dispatchers.Main) {
+                ttsPlayingBook = book
+                ttsPlayingChapter = chapter
+                ttsIsPlaying = true
+                ttsIsPaused = false
+
+                // Stop any other standard TTS
+                tts?.stop()
+
+                val glossary = repository.getGlossary(book.id)
+                val cleanText = repository.applyGlossary(text, glossary)
+                val rawParagraphs = cleanText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+
+                if (startFromParagraphIndex < 0) {
+                    ttsActiveParagraphIndex = -1
+                } else {
+                    ttsActiveParagraphIndex = startFromParagraphIndex
+                }
+
+                val textToSpeak = if (startFromParagraphIndex >= 0) {
+                    rawParagraphs.drop(startFromParagraphIndex).joinToString("\n")
+                } else {
+                    chapter.title + "\n" + cleanText
+                }
+
+                sherpaOnnxTtsEngine.initOnnx()
+                sherpaOnnxTtsEngine.speak(
+                    text = textToSpeak,
+                    speed = ttsSpeed,
+                    pitch = ttsPitch,
+                    onStart = { premiumIdx ->
+                        viewModelScope.launch(Dispatchers.Main) {
+                            ttsActiveParagraphIndex = if (startFromParagraphIndex >= 0) {
+                                startFromParagraphIndex + premiumIdx
+                            } else {
+                                premiumIdx - 1
+                            }
+                        }
+                    },
+                    onDone = {
+                        viewModelScope.launch(Dispatchers.Main) {
+                            playNextChapterTts()
+                        }
+                    }
+                )
+
+                showTtsNotification()
+            }
+            return
+        }
+
         initTts {
             viewModelScope.launch(Dispatchers.Main) {
                 ttsPlayingBook = book
@@ -869,7 +984,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun pauseTts() {
         if (ttsIsPlaying) {
-            tts?.stop()
+            if (selectedVoiceId == "premium_piper") {
+                sherpaOnnxTtsEngine.stop()
+            } else {
+                tts?.stop()
+            }
             ttsIsPlaying = false
             ttsIsPaused = true
             showTtsNotification()
@@ -883,7 +1002,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopTts() {
-        tts?.stop()
+        if (selectedVoiceId == "premium_piper") {
+            sherpaOnnxTtsEngine.stop()
+        } else {
+            tts?.stop()
+        }
         ttsPlayingBook = null
         ttsPlayingChapter = null
         ttsIsPlaying = false
@@ -1146,12 +1269,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             discoveryError = ""
             discoveryItems = emptyList()
             try {
+                // Fetch the candidate list from AniList helper (or offline fallback)
+                val rawNovels = com.example.data.api.AniListHelper.fetchPopularNovels()
+                val candidateCatalog = rawNovels.mapIndexed { idx, item ->
+                    "${idx + 1}. Title: ${item.title}\nDescription/Tropes: ${item.description}"
+                }.joinToString("\n\n")
+
                 val provider = aiRegistry.getActiveProviderForTask(activeAiProviderId, requiresJson = true)
                 val prompt = """
-                    You are a novel discovery assistant. Based on the user's preferred topics and genres: "$topicsAndGenres", suggest 3 to 5 popular translated web novels or light novels that match their taste.
-                    For each suggestion, provide:
-                    1. The title of the novel
-                    2. A one-sentence description explaining why they would like it
+                    You are a professional light novel and web novel discovery assistant. 
+                    Based on the user's preferred topics, genres, and tropes: "$topicsAndGenres", filter and rank the candidate list of web novels below to suggest 3 to 5 popular titles that match their taste.
+                    
+                    Candidate Web Novel Catalog:
+                    $candidateCatalog
+                    
+                    For each matched book:
+                    1. Keep the exact 'title' as given in the list.
+                    2. Write a customized, engaging 'description' of 1-2 sentences explaining precisely why it matches their preferences, citing specific tropes (like cultivation, transmigration, steampunk, OP mc, no romance, etc.).
+                    
                     Return a JSON array of objects, where each object has 'title' and 'description'.
                     Return ONLY the raw JSON array of objects: [{"title": "...", "description": "..."}]. Do not return markdown. Do not write '```json'.
                 """.trimIndent()
@@ -1163,18 +1298,137 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 
-                val cleanResponse = response.substringAfter("```json").substringAfter("```").substringBeforeLast("```").trim()
-                val jsonArray = org.json.JSONArray(cleanResponse)
+                val cleanResponse = response.trim()
                 val items = mutableListOf<DiscoveryItem>()
-                for (i in 0 until jsonArray.length()) {
-                    val obj = jsonArray.getJSONObject(i)
-                    val title = obj.optString("title", "").trim()
-                    val description = obj.optString("description", "").trim()
-                    if (title.isNotEmpty()) {
-                        val searchUrl = "https://tomatomtl.com/#/search?search=${java.net.URLEncoder.encode(title, "UTF-8")}"
-                        items.add(DiscoveryItem(title, description, searchUrl))
+                var jsonArray: org.json.JSONArray? = null
+                
+                try {
+                    var rawJson = cleanResponse
+                    if (rawJson.contains("```")) {
+                        rawJson = rawJson.substringAfter("```json").substringAfter("```").substringBeforeLast("```").trim()
+                    }
+                    
+                    try {
+                        jsonArray = org.json.JSONArray(rawJson)
+                    } catch (e: Exception) {
+                        // Attempt to extract array brackets if there is leading text
+                        val firstBracket = rawJson.indexOf('[')
+                        val lastBracket = rawJson.lastIndexOf(']')
+                        if (firstBracket != -1 && lastBracket != -1 && lastBracket > firstBracket) {
+                            val candidate = rawJson.substring(firstBracket, lastBracket + 1)
+                            jsonArray = org.json.JSONArray(candidate)
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                if (jsonArray != null) {
+                    try {
+                        for (i in 0 until jsonArray.length()) {
+                            val obj = jsonArray.getJSONObject(i)
+                            val title = obj.optString("title", "").trim()
+                            val description = obj.optString("description", "").trim()
+                            if (title.isNotEmpty()) {
+                                val searchUrl = "https://tomatomtl.com/#/search?search=${java.net.URLEncoder.encode(title, "UTF-8")}"
+                                items.add(DiscoveryItem(title, description, searchUrl))
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
                     }
                 }
+
+                // Fallback 1: Parse plain-text lists or bullet points
+                if (items.isEmpty()) {
+                    try {
+                        val lines = cleanResponse.lines()
+                        var currentTitle = ""
+                        var currentDesc = ""
+                        for (line in lines) {
+                            val trimmedLine = line.trim()
+                            if (trimmedLine.contains("Title:", ignoreCase = true)) {
+                                if (currentTitle.isNotEmpty()) {
+                                    items.add(
+                                        DiscoveryItem(
+                                            currentTitle,
+                                            if (currentDesc.isNotEmpty()) currentDesc else "Matched web novel recommendation.",
+                                            "https://tomatomtl.com/#/search?search=${java.net.URLEncoder.encode(currentTitle, "UTF-8")}"
+                                        )
+                                    )
+                                    currentDesc = ""
+                                }
+                                currentTitle = trimmedLine.substringAfter("Title:", "").trim().removeSurrounding("\"").removeSurrounding("'")
+                            } else if (trimmedLine.contains("Description:", ignoreCase = true)) {
+                                currentDesc = trimmedLine.substringAfter("Description:", "").trim().removeSurrounding("\"").removeSurrounding("'")
+                            } else if (trimmedLine.startsWith("- ") || trimmedLine.startsWith("* ") || (trimmedLine.firstOrNull()?.isDigit() == true && trimmedLine.contains(". "))) {
+                                val content = trimmedLine.substringAfter("- ").substringAfter("* ").substringAfter(". ").trim()
+                                if (content.isNotEmpty() && !content.contains("JSON") && !content.contains("array")) {
+                                    if (currentTitle.isNotEmpty() && currentDesc.isNotEmpty()) {
+                                        items.add(
+                                            DiscoveryItem(
+                                                currentTitle,
+                                                currentDesc,
+                                                "https://tomatomtl.com/#/search?search=${java.net.URLEncoder.encode(currentTitle, "UTF-8")}"
+                                            )
+                                        )
+                                        currentTitle = ""
+                                        currentDesc = ""
+                                    }
+                                    if (content.contains(":")) {
+                                        currentTitle = content.substringBefore(":").trim().removeSurrounding("\"").removeSurrounding("'")
+                                        currentDesc = content.substringAfter(":").trim()
+                                    } else if (content.contains("-")) {
+                                        currentTitle = content.substringBefore("-").trim().removeSurrounding("\"").removeSurrounding("'")
+                                        currentDesc = content.substringAfter("-").trim()
+                                    } else {
+                                        currentTitle = content
+                                    }
+                                }
+                            }
+                        }
+                        if (currentTitle.isNotEmpty()) {
+                            items.add(
+                                DiscoveryItem(
+                                    currentTitle,
+                                    if (currentDesc.isNotEmpty()) currentDesc else "Matched web novel recommendation.",
+                                    "https://tomatomtl.com/#/search?search=${java.net.URLEncoder.encode(currentTitle, "UTF-8")}"
+                                )
+                            )
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+
+                // Fallback 2: Offline smart-matching using user keyword filtering against our light novel catalog
+                if (items.isEmpty()) {
+                    val keywords = topicsAndGenres.lowercase().split(Regex("[\\s,\\.]+")).filter { it.length > 2 }
+                    val candidates = rawNovels.ifEmpty { com.example.data.api.AniListHelper.fetchPopularNovels() }
+                    val matched = candidates.filter { candidate ->
+                        keywords.any { keyword ->
+                            candidate.title.lowercase().contains(keyword) || 
+                            candidate.description.lowercase().contains(keyword)
+                        }
+                    }.take(4)
+                    
+                    val fallbackList = if (matched.size >= 2) {
+                        matched
+                    } else {
+                        candidates.shuffled().take(3)
+                    }
+                    
+                    fallbackList.forEach { candidate ->
+                        items.add(
+                            DiscoveryItem(
+                                candidate.title,
+                                "Locally matched recommendation: ${candidate.description}",
+                                "https://tomatomtl.com/#/search?search=${java.net.URLEncoder.encode(candidate.title, "UTF-8")}"
+                            )
+                        )
+                    }
+                }
+
                 discoveryItems = items
                 if (items.isEmpty()) {
                     discoveryError = "No suggestions found in AI response."
@@ -1225,6 +1479,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        sherpaOnnxTtsEngine.shutdown()
         tts?.stop()
         tts?.shutdown()
         unregisterTtsReceiver()
