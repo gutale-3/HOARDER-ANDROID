@@ -1,0 +1,6 @@
+{
+  "name": "Novel Hoarder",
+  "description": "A sleek, dark offline reader and downloader for translated novels with custom glossaries and customizable navigation themes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
