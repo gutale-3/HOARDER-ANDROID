@@ -52,6 +52,21 @@ class NovelRepository(private val bookDao: BookDao) {
 
     suspend fun clearGlossary(bookId: String) = bookDao.clearGlossaryForBook(bookId)
 
+    // --- Polished Chapters ---
+    suspend fun getPolishedChapter(chapterId: String): PolishedChapterEntity? = bookDao.getPolishedChapter(chapterId)
+
+    fun getPolishedChapterFlow(chapterId: String): Flow<PolishedChapterEntity?> = bookDao.getPolishedChapterFlow(chapterId)
+
+    suspend fun insertPolishedChapter(polished: PolishedChapterEntity) = bookDao.insertPolishedChapter(polished)
+
+    // --- Chapter Recaps ---
+    suspend fun getChapterRecap(chapterId: String): ChapterRecapEntity? = bookDao.getChapterRecap(chapterId)
+
+    suspend fun insertChapterRecap(recap: ChapterRecapEntity) = bookDao.insertChapterRecap(recap)
+
+    // --- Bulk Updates / Find-and-Replace ---
+    suspend fun updateChapterContent(id: String, content: String) = bookDao.updateChapterContent(id, content)
+
     // --- Glossary application helper ---
     fun applyGlossary(text: String, glossary: List<GlossaryEntity>): String {
         var cleanText = text

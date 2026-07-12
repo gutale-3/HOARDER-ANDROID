@@ -45,12 +45,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var defaultUserAgent by mutableStateOf("")
         private set
 
+    // --- AI Configuration and State ---
+    var activeAiProviderId by mutableStateOf("gemini_cloud")
+        private set
+
+    val aiRegistry = com.example.data.ai.AiProviderRegistry(application)
+    val modelManager = com.example.data.ai.ModelManager(application)
+
     init {
         val themeName = prefs.getString("selected_theme", AppTheme.IMMERSIVE_UI.name)
         currentTheme = AppTheme.valueOf(themeName ?: AppTheme.IMMERSIVE_UI.name)
         readerFontSize = prefs.getInt("reader_font_size", 18)
         defaultUserAgent = prefs.getString("user_agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36") ?: ""
+        activeAiProviderId = prefs.getString("active_ai_provider", "gemini_cloud") ?: "gemini_cloud"
         registerTtsReceiver()
+    }
+
+    fun updateActiveAiProvider(providerId: String) {
+        activeAiProviderId = providerId
+        prefs.edit().putString("active_ai_provider", providerId).apply()
     }
 
     fun updateTheme(theme: AppTheme) {
@@ -943,6 +956,273 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return updatedBook
     }
 
+    // --- Glossary AI State ---
+    var isGeneratingGlossary by mutableStateOf(false)
+        private set
+    var glossaryStatusMessage by mutableStateOf("")
+        private set
+
+    // --- Translation Polish State ---
+    private val _polishedChaptersLoading = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val polishedChaptersLoading = _polishedChaptersLoading.asStateFlow()
+
+    // --- Chapter Recap State ---
+    private val _chapterRecapLoading = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val chapterRecapLoading = _chapterRecapLoading.asStateFlow()
+
+    // --- AI Novel Discovery State ---
+    var discoveryItems by mutableStateOf<List<DiscoveryItem>>(emptyList())
+        private set
+    var isDiscovering by mutableStateOf(false)
+        private set
+    var discoveryError by mutableStateOf("")
+        private set
+
+    // --- AI Glossary Generator ---
+    fun generateGlossaryWithAi(book: BookEntity) {
+        viewModelScope.launch {
+            isGeneratingGlossary = true
+            glossaryStatusMessage = "Analyzing book content..."
+            try {
+                val chapters = repository.getChapters(book.id)
+                if (chapters.isEmpty()) {
+                    glossaryStatusMessage = "No chapters found for this book."
+                    isGeneratingGlossary = false
+                    return@launch
+                }
+                
+                // Take first ~12k characters
+                val sampleText = chapters.take(5).joinToString("\n\n") { it.content }.take(12000)
+                glossaryStatusMessage = "Consulting AI provider..."
+                
+                val provider = aiRegistry.getActiveProviderForTask(activeAiProviderId, requiresJson = true)
+                val prompt = """
+                    Analyze the following novel content and identify character names, locations, and unique terms that are poorly machine-translated or require a consistent translation glossary. 
+                    Return a JSON array containing objects with 'original' (the text in the content, usually a pinyin or direct translation name) and 'replacement' (a natural, polished English name/translation).
+                    Only return a JSON array of objects: [{"original": "...", "replacement": "..."}]. Do not return markdown, do not write '```json'. Just raw JSON.
+                    
+                    Novel Content:
+                    $sampleText
+                """.trimIndent()
+                
+                val response = provider.generate(prompt, jsonMode = true)
+                if (response.startsWith("Error:")) {
+                    glossaryStatusMessage = response
+                    isGeneratingGlossary = false
+                    return@launch
+                }
+                
+                // Clean markdown codeblocks if model didn't obey
+                val cleanResponse = response.substringAfter("```json").substringAfter("```").substringBeforeLast("```").trim()
+                
+                glossaryStatusMessage = "Parsing terms and deduping..."
+                val jsonArray = org.json.JSONArray(cleanResponse)
+                val existing = repository.getGlossary(book.id)
+                var count = 0
+                for (i in 0 until jsonArray.length()) {
+                    val obj = jsonArray.getJSONObject(i)
+                    val original = obj.optString("original", "").trim()
+                    val replacement = obj.optString("replacement", "").trim()
+                    
+                    if (original.isNotEmpty() && replacement.isNotEmpty()) {
+                        val alreadyExists = existing.any { it.originalText.equals(original, ignoreCase = true) }
+                        if (!alreadyExists) {
+                            repository.insertGlossary(
+                                GlossaryEntity(
+                                    bookId = book.id,
+                                    originalText = original,
+                                    replacementText = replacement
+                                )
+                            )
+                            count++
+                        }
+                    }
+                }
+                glossaryStatusMessage = "Success! Added $count new terms to your glossary."
+            } catch (e: Exception) {
+                glossaryStatusMessage = "Error: ${e.message}"
+                e.printStackTrace()
+            } finally {
+                isGeneratingGlossary = false
+            }
+        }
+    }
+
+    // --- Translation Polish ---
+    fun polishChapter(chapter: ChapterEntity) {
+        viewModelScope.launch {
+            _polishedChaptersLoading.update { it + (chapter.id to true) }
+            try {
+                val provider = aiRegistry.getActiveProviderForTask(activeAiProviderId, requiresJson = false)
+                val prompt = """
+                    Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text.
+                    
+                    Chapter Title: ${chapter.title}
+                    
+                    Chapter Content:
+                    ${chapter.content}
+                """.trimIndent()
+                
+                val response = provider.generate(prompt, jsonMode = false)
+                if (!response.startsWith("Error:")) {
+                    repository.insertPolishedChapter(
+                        PolishedChapterEntity(
+                            chapterId = chapter.id,
+                            bookId = chapter.bookId,
+                            content = response
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                _polishedChaptersLoading.update { it - chapter.id }
+            }
+        }
+    }
+
+    fun getPolishedChapterFlow(chapterId: String): Flow<PolishedChapterEntity?> {
+        return repository.getPolishedChapterFlow(chapterId)
+    }
+
+    // --- Chapter Recap ---
+    suspend fun getChapterRecap(chapter: ChapterEntity, force: Boolean = false): String? {
+        if (!force) {
+            val cached = repository.getChapterRecap(chapter.id)
+            if (cached != null) return cached.summary
+        }
+
+        _chapterRecapLoading.update { it + (chapter.id to true) }
+        try {
+            val provider = aiRegistry.getActiveProviderForTask(activeAiProviderId, requiresJson = false)
+            val prompt = """
+                Provide a concise summary ('Previously on...') of the following chapter. Focus on key plot points and character actions in 2-3 sentences. Do not add metadata or conversational padding.
+                
+                Chapter Title: ${chapter.title}
+                
+                Chapter Content:
+                ${chapter.content}
+            """.trimIndent()
+
+            val response = provider.generate(prompt, jsonMode = false)
+            if (!response.startsWith("Error:")) {
+                val recap = response.trim()
+                repository.insertChapterRecap(
+                    ChapterRecapEntity(
+                        chapterId = chapter.id,
+                        bookId = chapter.bookId,
+                        summary = recap
+                    )
+                )
+                return recap
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            _chapterRecapLoading.update { it - chapter.id }
+        }
+        return null
+    }
+
+    // --- Ask About Selection ---
+    suspend fun askAboutSelection(selection: String, question: String): String {
+        try {
+            val provider = aiRegistry.getActiveProviderForTask(activeAiProviderId, requiresJson = false)
+            val prompt = """
+                You are an expert novel reading assistant. A user has selected the following text from a novel: "$selection".
+                They have a question about it: "$question".
+                Provide a concise, helpful answer explaining the context, translating terms, or clarifying plot details as requested.
+            """.trimIndent()
+            return provider.generate(prompt, jsonMode = false)
+        } catch (e: Exception) {
+            return "Error: ${e.message}"
+        }
+    }
+
+    // --- AI Novel Discovery ---
+    fun discoverNovels(topicsAndGenres: String) {
+        viewModelScope.launch {
+            isDiscovering = true
+            discoveryError = ""
+            discoveryItems = emptyList()
+            try {
+                val provider = aiRegistry.getActiveProviderForTask(activeAiProviderId, requiresJson = true)
+                val prompt = """
+                    You are a novel discovery assistant. Based on the user's preferred topics and genres: "$topicsAndGenres", suggest 3 to 5 popular translated web novels or light novels that match their taste.
+                    For each suggestion, provide:
+                    1. The title of the novel
+                    2. A one-sentence description explaining why they would like it
+                    Return a JSON array of objects, where each object has 'title' and 'description'.
+                    Return ONLY the raw JSON array of objects: [{"title": "...", "description": "..."}]. Do not return markdown. Do not write '```json'.
+                """.trimIndent()
+                
+                val response = provider.generate(prompt, jsonMode = true)
+                if (response.startsWith("Error:")) {
+                    discoveryError = response
+                    isDiscovering = false
+                    return@launch
+                }
+                
+                val cleanResponse = response.substringAfter("```json").substringAfter("```").substringBeforeLast("```").trim()
+                val jsonArray = org.json.JSONArray(cleanResponse)
+                val items = mutableListOf<DiscoveryItem>()
+                for (i in 0 until jsonArray.length()) {
+                    val obj = jsonArray.getJSONObject(i)
+                    val title = obj.optString("title", "").trim()
+                    val description = obj.optString("description", "").trim()
+                    if (title.isNotEmpty()) {
+                        val searchUrl = "https://tomatomtl.com/#/search?search=${java.net.URLEncoder.encode(title, "UTF-8")}"
+                        items.add(DiscoveryItem(title, description, searchUrl))
+                    }
+                }
+                discoveryItems = items
+                if (items.isEmpty()) {
+                    discoveryError = "No suggestions found in AI response."
+                }
+            } catch (e: Exception) {
+                discoveryError = "Error: ${e.message}"
+                e.printStackTrace()
+            } finally {
+                isDiscovering = false
+            }
+        }
+    }
+
+    // --- Bulk Find & Replace (Non-AI Utility) ---
+    suspend fun bulkFindAndReplace(
+        bookId: String?,
+        findText: String,
+        replaceText: String,
+        scopeAllBooks: Boolean
+    ): Pair<Int, Int> = withContext(Dispatchers.IO) {
+        if (findText.isEmpty()) return@withContext Pair(0, 0)
+        
+        var chaptersModified = 0
+        var totalMatchesReplaced = 0
+        
+        val targetChapters = if (scopeAllBooks) {
+            val books = repository.allBooks.firstOrNull() ?: emptyList()
+            books.flatMap { repository.getChapters(it.id) }
+        } else {
+            if (bookId == null) emptyList() else repository.getChapters(bookId)
+        }
+        
+        for (chapter in targetChapters) {
+            if (chapter.content.contains(findText, ignoreCase = true)) {
+                val regex = Regex(Regex.escape(findText), RegexOption.IGNORE_CASE)
+                val matches = regex.findAll(chapter.content).count()
+                if (matches > 0) {
+                    val updatedContent = chapter.content.replace(findText, replaceText, ignoreCase = true)
+                    repository.updateChapterContent(chapter.id, updatedContent)
+                    chaptersModified++
+                    totalMatchesReplaced += matches
+                }
+            }
+        }
+        
+        return@withContext Pair(chaptersModified, totalMatchesReplaced)
+    }
+
     override fun onCleared() {
         super.onCleared()
         tts?.stop()
@@ -957,6 +1237,12 @@ data class VoiceOption(
     val id: String,
     val name: String,
     val locale: java.util.Locale
+)
+
+data class DiscoveryItem(
+    val title: String,
+    val description: String,
+    val searchUrl: String
 )
 
 // Simple extension helper

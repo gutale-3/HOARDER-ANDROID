@@ -427,13 +427,59 @@ fun GlossaryManagerDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(340.dp),
+                    .height(420.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
                     text = "Add translation rules to replace machine-translated terms dynamically as you read offline.",
                     style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
                 )
+
+                // AI Glossary Button Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "AI Glossary Assistant",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    )
+                    Button(
+                        onClick = { viewModel.generateGlossaryWithAi(book) },
+                        enabled = !viewModel.isGeneratingGlossary,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        ),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.testTag("ai_glossary_generate_btn")
+                    ) {
+                        if (viewModel.isGeneratingGlossary) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        } else {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = "AI", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Generate with AI", fontSize = 11.sp)
+                        }
+                    }
+                }
+                
+                if (viewModel.glossaryStatusMessage.isNotEmpty()) {
+                    Text(
+                        text = viewModel.glossaryStatusMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (viewModel.glossaryStatusMessage.startsWith("Error")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    )
+                }
+
+                Divider()
 
                 // Input fields
                 Row(

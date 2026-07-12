@@ -28,6 +28,8 @@ import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.ReaderScreen
 import com.example.ui.screens.ScrapeScreen
 import com.example.ui.screens.TtsPlayerBar
+import com.example.ui.screens.DiscoverScreen
+import com.example.ui.screens.AiSettingsDialog
 import com.example.ui.theme.AppTheme
 import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodel.MainViewModel
@@ -54,6 +56,7 @@ class MainActivity : ComponentActivity() {
 
         // Hide navigation elements on Reader screen for deep immersive reading
         val isReaderScreen = currentRoute.startsWith("reader")
+        var showAiSettings by remember { mutableStateOf(false) }
 
         Scaffold(
           modifier = Modifier.fillMaxSize(),
@@ -66,12 +69,22 @@ class MainActivity : ComponentActivity() {
                       "home" -> "Novel Hoarder"
                       "scrape" -> "Scraper Terminal"
                       "library" -> "My Library"
+                      "discover" -> "AI Novel Discoverer"
                       else -> "Novel Hoarder"
                     },
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                   )
                 },
                 actions = {
+                  // AI Control Center button
+                  IconButton(onClick = { showAiSettings = true }) {
+                    Icon(
+                      imageVector = Icons.Default.AutoAwesome,
+                      contentDescription = "AI Control Center",
+                      tint = MaterialTheme.colorScheme.primary
+                    )
+                  }
+
                   // Theme palette chooser directly in the header!
                   var showThemeMenu by remember { mutableStateOf(false) }
                   Box {
@@ -168,6 +181,23 @@ class MainActivity : ComponentActivity() {
                   label = { Text("Library") },
                   modifier = Modifier.testTag("nav_library_tab")
                 )
+
+                // Discover tab
+                NavigationBarItem(
+                  selected = currentRoute == "discover",
+                  onClick = {
+                    if (currentRoute != "discover") {
+                      navController.navigate("discover") {
+                        popUpTo("home") { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                      }
+                    }
+                  },
+                  icon = { Icon(Icons.Default.AutoAwesome, contentDescription = "Discover") },
+                  label = { Text("Discover") },
+                  modifier = Modifier.testTag("nav_discover_tab")
+                )
               }
             }
           }
@@ -213,6 +243,20 @@ class MainActivity : ComponentActivity() {
                   onBack = { navController.popBackStack() }
                 )
               }
+
+              composable("discover") {
+                DiscoverScreen(
+                  viewModel = viewModel,
+                  onNavigateToScrape = { navController.navigate("scrape") }
+                )
+              }
+            }
+
+            if (showAiSettings) {
+              AiSettingsDialog(
+                viewModel = viewModel,
+                onDismiss = { showAiSettings = false }
+              )
             }
 
             TtsPlayerBar(

@@ -53,6 +53,14 @@ fun ReaderScreen(
     var isMultiSelectMode by remember { mutableStateOf(false) }
     var selectedChapters by remember { mutableStateOf(setOf<String>()) }
 
+    // AI states
+    val polishedChaptersLoading by viewModel.polishedChaptersLoading.collectAsState()
+    val polishedChapter by viewModel.getPolishedChapterFlow(currentChapterId).collectAsState(null)
+    var readPolishedTranslation by remember { mutableStateOf(true) }
+    var showRecapDialog by remember { mutableStateOf(false) }
+    var showAskAiDialog by remember { mutableStateOf(false) }
+    var showFindReplaceDialog by remember { mutableStateOf(false) }
+
     // Reset multi-select when drawer closes
     LaunchedEffect(drawerState.isOpen) {
         if (!drawerState.isOpen) {
@@ -402,7 +410,115 @@ fun ReaderScreen(
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
 
-                        val paragraphs = activeChapter.content.split("\n").filter { it.trim().isNotEmpty() }
+                        // AI Reading Toolbar
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val isPolishing = polishedChaptersLoading[activeChapter.id] == true
+                            
+                            if (polishedChapter != null) {
+                                FilterChip(
+                                    selected = readPolishedTranslation,
+                                    onClick = { readPolishedTranslation = !readPolishedTranslation },
+                                    label = { Text("✨ AI Polished") },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.AutoAwesome,
+                                            contentDescription = "Polished",
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.testTag("ai_toggle_polished")
+                                )
+                            } else {
+                                Button(
+                                    onClick = { viewModel.polishChapter(activeChapter) },
+                                    enabled = !isPolishing,
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(32.dp).testTag("ai_polish_button")
+                                ) {
+                                    if (isPolishing) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            strokeWidth = 2.dp,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    } else {
+                                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("AI Polish", fontSize = 11.sp)
+                                    }
+                                }
+                            }
+
+                            // Summary / Recap button
+                            Button(
+                                onClick = { showRecapDialog = true },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                ),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier.height(32.dp).testTag("ai_recap_button")
+                            ) {
+                                Icon(Icons.Default.Summarize, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Recap", fontSize = 11.sp)
+                            }
+
+                            // Ask AI button
+                            Button(
+                                onClick = { showAskAiDialog = true },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                                ),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier.height(32.dp).testTag("ai_ask_button")
+                            ) {
+                                Icon(Icons.Default.Forum, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Ask AI", fontSize = 11.sp)
+                            }
+
+                            // Find & Replace
+                            IconButton(
+                                onClick = { showFindReplaceDialog = true },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                                    .testTag("bulk_replace_icon_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.SwapHoriz,
+                                    contentDescription = "Find & Replace",
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Divider()
+
+                        val chapterTextToRender = if (polishedChapter != null && readPolishedTranslation) {
+                            polishedChapter!!.content
+                        } else {
+                            activeChapter.content
+                        }
+
+                        val paragraphs = chapterTextToRender.split("\n").filter { it.trim().isNotEmpty() }
                         paragraphs.forEachIndexed { idx, para ->
                             val isReadingThisPara = viewModel.ttsIsPlaying &&
                                     viewModel.ttsPlayingBook?.id == bookState?.id &&
@@ -531,4 +647,361 @@ fun ReaderScreen(
             }
         )
     }
+
+    if (showRecapDialog && activeChapter != null) {
+        ChapterRecapDialog(
+            chapter = activeChapter,
+            viewModel = viewModel,
+            onDismiss = { showRecapDialog = false }
+        )
+    }
+
+    if (showAskAiDialog && activeChapter != null) {
+        AskAiDialog(
+            chapter = activeChapter,
+            viewModel = viewModel,
+            onDismiss = { showAskAiDialog = false }
+        )
+    }
+
+    if (showFindReplaceDialog) {
+        FindReplaceDialog(
+            bookId = bookId,
+            viewModel = viewModel,
+            onDismiss = { showFindReplaceDialog = false }
+        )
+    }
+}
+
+@Composable
+fun ChapterRecapDialog(
+    chapter: ChapterEntity,
+    viewModel: MainViewModel,
+    onDismiss: () -> Unit
+) {
+    val coroutineScope = rememberCoroutineScope()
+    var isGenerating by remember { mutableStateOf(false) }
+    var summaryText by remember { mutableStateOf("") }
+
+    LaunchedEffect(chapter.id) {
+        isGenerating = true
+        val cached = viewModel.repository.getChapterRecap(chapter.id)
+        if (cached != null) {
+            summaryText = cached.summary
+        }
+        isGenerating = false
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Summarize, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Chapter Recap")
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "A concise AI summary of the events in: ${chapter.title}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                if (isGenerating) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(120.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text("AI is writing recap...", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                } else if (summaryText.isNotEmpty()) {
+                    OutlinedCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.outlinedCardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                        )
+                    ) {
+                        Text(
+                            text = summaryText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(16.dp),
+                            lineHeight = 20.sp
+                        )
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(120.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Button(
+                            onClick = {
+                                isGenerating = true
+                                coroutineScope.launch {
+                                    val result = viewModel.getChapterRecap(chapter)
+                                    if (result != null) {
+                                        summaryText = result
+                                    }
+                                    isGenerating = false
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Generate Recap with AI")
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Dismiss")
+            }
+        },
+        dismissButton = {
+            if (summaryText.isNotEmpty() && !isGenerating) {
+                TextButton(onClick = {
+                    isGenerating = true
+                    coroutineScope.launch {
+                        val result = viewModel.getChapterRecap(chapter, force = true)
+                        if (result != null) {
+                            summaryText = result
+                        }
+                        isGenerating = false
+                    }
+                }) {
+                    Text("Regenerate")
+                }
+            }
+        }
+    )
+}
+
+@Composable
+fun AskAiDialog(
+    chapter: ChapterEntity,
+    viewModel: MainViewModel,
+    onDismiss: () -> Unit
+) {
+    val coroutineScope = rememberCoroutineScope()
+    var question by remember { mutableStateOf("") }
+    var answer by remember { mutableStateOf("") }
+    var isThinking by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Forum, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Ask AI Helper")
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Ask any question about characters, translation nuances, or plot context in: ${chapter.title}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                OutlinedTextField(
+                    value = question,
+                    onValueChange = { question = it },
+                    placeholder = { Text("e.g. Who is Master Lin Feng?") },
+                    label = { Text("Your Question") },
+                    modifier = Modifier.fillMaxWidth().testTag("ask_ai_input_field"),
+                    shape = RoundedCornerShape(8.dp),
+                    singleLine = true
+                )
+
+                if (isThinking) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(100.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("AI is answering...", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                } else if (answer.isNotEmpty()) {
+                    Text(
+                        text = "Answer:",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    OutlinedCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.outlinedCardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                        )
+                    ) {
+                        Text(
+                            text = answer,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(12.dp),
+                            lineHeight = 18.sp
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (question.isNotBlank()) {
+                        isThinking = true
+                        coroutineScope.launch {
+                            val resp = viewModel.askAboutSelection(
+                                selection = chapter.content.take(1000),
+                                question = question
+                            )
+                            answer = resp
+                            isThinking = false
+                        }
+                    }
+                },
+                enabled = question.isNotBlank() && !isThinking,
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("Ask")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
+}
+
+@Composable
+fun FindReplaceDialog(
+    bookId: String,
+    viewModel: MainViewModel,
+    onDismiss: () -> Unit
+) {
+    val coroutineScope = rememberCoroutineScope()
+    var findText by remember { mutableStateOf("") }
+    var replaceText by remember { mutableStateOf("") }
+    var scopeAllBooks by remember { mutableStateOf(false) }
+    var isReplacing by remember { mutableStateOf(false) }
+    var resultMessage by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.SwapHoriz, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Bulk Find & Replace")
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Perform bulk string substitutions across downloaded chapters.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                OutlinedTextField(
+                    value = findText,
+                    onValueChange = { findText = it },
+                    label = { Text("Find Text") },
+                    placeholder = { Text("e.g. Master Lin") },
+                    modifier = Modifier.fillMaxWidth().testTag("bulk_replace_find_input"),
+                    shape = RoundedCornerShape(8.dp),
+                    singleLine = true
+                )
+
+                OutlinedTextField(
+                    value = replaceText,
+                    onValueChange = { replaceText = it },
+                    label = { Text("Replacement Text") },
+                    placeholder = { Text("e.g. Lin Feng") },
+                    modifier = Modifier.fillMaxWidth().testTag("bulk_replace_replace_input"),
+                    shape = RoundedCornerShape(8.dp),
+                    singleLine = true
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Apply across ALL books",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Switch(
+                        checked = scopeAllBooks,
+                        onCheckedChange = { scopeAllBooks = it }
+                    )
+                }
+
+                if (isReplacing) {
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                } else if (resultMessage.isNotEmpty()) {
+                    Text(
+                        text = resultMessage,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (findText.isNotEmpty()) {
+                        isReplacing = true
+                        resultMessage = ""
+                        coroutineScope.launch {
+                            val results = viewModel.bulkFindAndReplace(
+                                bookId = bookId,
+                                findText = findText,
+                                replaceText = replaceText,
+                                scopeAllBooks = scopeAllBooks
+                            )
+                            resultMessage = "Replaced in ${results.first} chapters (${results.second} matches)"
+                            isReplacing = false
+                        }
+                    }
+                },
+                enabled = findText.isNotEmpty() && !isReplacing,
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("Execute")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
 }

@@ -73,4 +73,25 @@ interface BookDao {
 
     @Query("DELETE FROM glossaries WHERE bookId = :bookId")
     suspend fun clearGlossaryForBook(bookId: String)
+
+    // --- Polished Chapters ---
+    @Query("SELECT * FROM polished_chapters WHERE chapterId = :chapterId")
+    suspend fun getPolishedChapter(chapterId: String): PolishedChapterEntity?
+
+    @Query("SELECT * FROM polished_chapters WHERE chapterId = :chapterId")
+    fun getPolishedChapterFlow(chapterId: String): Flow<PolishedChapterEntity?>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPolishedChapter(polished: PolishedChapterEntity)
+
+    // --- Chapter Recaps ---
+    @Query("SELECT * FROM chapter_recaps WHERE chapterId = :chapterId")
+    suspend fun getChapterRecap(chapterId: String): ChapterRecapEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertChapterRecap(recap: ChapterRecapEntity)
+
+    // --- Bulk Updates / Find-and-Replace ---
+    @Query("UPDATE chapters SET content = :content WHERE id = :id")
+    suspend fun updateChapterContent(id: String, content: String)
 }
