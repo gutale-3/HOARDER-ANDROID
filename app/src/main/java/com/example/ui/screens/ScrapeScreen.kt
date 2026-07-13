@@ -53,14 +53,15 @@ fun ScrapeScreen(
         }
     }
 
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)
-    ) {
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)
+        ) {
         // Interactive Browser Launcher Card
         item {
             Card(
@@ -309,61 +310,263 @@ fun ScrapeScreen(
             }
         }
 
+        // Smart Sync Operations Card
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("scrape_smart_ops_card"),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                ),
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Smart Sync Tools",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    )
+
+                    Text(
+                        text = "Use these advanced utilities to find gaps or quickly download missing/new content without manual tracking.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Continue Scraping Button
+                        Button(
+                            onClick = { viewModel.continueScraping() },
+                            enabled = !viewModel.isScraping && !viewModel.isSearchingMissing,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("btn_continue_scraping")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SkipNext,
+                                contentDescription = "Continue Scraping"
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Continue", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        }
+
+                        // Search Missing Chapters Button
+                        Button(
+                            onClick = { viewModel.searchMissingChapters() },
+                            enabled = !viewModel.isScraping && !viewModel.isSearchingMissing,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("btn_search_missing")
+                        ) {
+                            if (viewModel.isSearchingMissing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = "Search Missing"
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Find Gaps", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        }
+                    }
+
+                    // Show missing chapters list or status if available
+                    if (viewModel.missingChaptersSummary.isNotEmpty() || viewModel.missingChaptersToScrape.isNotEmpty()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                        
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = viewModel.missingChaptersSummary,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+
+                            if (viewModel.missingChaptersToScrape.isNotEmpty()) {
+                                Button(
+                                    onClick = { viewModel.startScrapingMissing() },
+                                    enabled = !viewModel.isScraping,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary
+                                    ),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("btn_scrape_missing")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = "Scrape/Add Missing Chapters"
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Scrape / Add Missing Chapters", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Action controls (Start / Stop)
         item {
-            Row(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                if (viewModel.isScraping) {
-                    Button(
-                        onClick = { viewModel.stopScraping() },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .weight(1.5f)
-                            .height(50.dp)
-                            .testTag("scrape_stop_btn")
-                    ) {
-                        Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Stop Scraping", fontWeight = FontWeight.Bold)
-                    }
-                } else {
-                    Button(
-                        onClick = { viewModel.startScraping() },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .weight(1.5f)
-                            .height(50.dp)
-                            .testTag("scrape_start_btn")
-                    ) {
-                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Start Scraping", fontWeight = FontWeight.Bold)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (viewModel.isScraping) {
+                        Button(
+                            onClick = { viewModel.stopScraping() },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(50.dp)
+                                .testTag("scrape_stop_btn")
+                        ) {
+                            Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Stop", fontWeight = FontWeight.Bold)
+                        }
+
+                        if (viewModel.isScrapePaused) {
+                            Button(
+                                onClick = { viewModel.resumeScraping() },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.tertiary
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .weight(1.2f)
+                                    .height(50.dp)
+                                    .testTag("scrape_resume_btn")
+                            ) {
+                                Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Resume")
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Resume", fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            Button(
+                                onClick = { viewModel.pauseScraping() },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.secondary
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .weight(1.2f)
+                                    .height(50.dp)
+                                    .testTag("scrape_pause_btn")
+                            ) {
+                                Icon(imageVector = Icons.Default.Pause, contentDescription = "Pause")
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Pause", fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Button(
+                            onClick = { viewModel.skipCurrentChapter() },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(50.dp)
+                                .testTag("scrape_skip_btn")
+                        ) {
+                            Icon(imageVector = Icons.Default.SkipNext, contentDescription = "Skip")
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Skip", fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        Button(
+                            onClick = { viewModel.startScraping() },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1.5f)
+                                .height(50.dp)
+                                .testTag("scrape_start_btn")
+                        ) {
+                            Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start")
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Start Scraping", fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = { viewModel.clearLogs() },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(50.dp)
+                                .testTag("scrape_clear_logs_btn")
+                        ) {
+                            Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = "Clear logs")
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Clear", fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
 
-                Button(
-                    onClick = { viewModel.clearLogs() },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(50.dp)
-                        .testTag("scrape_clear_logs_btn")
-                ) {
-                    Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = "Clear logs")
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Clear Log", fontWeight = FontWeight.Bold)
+                if (viewModel.isScraping) {
+                    Button(
+                        onClick = { viewModel.clearLogs() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(40.dp)
+                            .testTag("scrape_clear_logs_btn")
+                    ) {
+                        Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = "Clear logs")
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Clear Logs", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
@@ -555,7 +758,7 @@ fun ScrapeScreen(
         }
     }
 
-    // --- Dynamic Manual Browser Dialog ---
+    // --- Dynamic Manual Browser Overlay ---
     if (viewModel.showManualBrowser) {
         var webViewInstance by remember { mutableStateOf<WebView?>(null) }
         var currentWebUrl by remember { mutableStateOf(viewModel.manualBrowserUrl) }
@@ -564,205 +767,204 @@ fun ScrapeScreen(
         var canGoForward by remember { mutableStateOf(false) }
         val focusManager = LocalFocusManager.current
 
-        Dialog(
-            onDismissRequest = { viewModel.showManualBrowser = false },
-            properties = DialogProperties(
-                dismissOnBackPress = !canGoBack,
-                dismissOnClickOutside = false,
-                usePlatformDefaultWidth = false
-            )
-        ) {
-            BackHandler(enabled = canGoBack) {
+        // Intercept back presses globally when the manual browser is open
+        BackHandler(enabled = true) {
+            if (canGoBack) {
                 webViewInstance?.goBack()
+            } else {
+                viewModel.showManualBrowser = false
             }
+        }
 
-            Surface(
-                modifier = Modifier.fillMaxSize(),
-                color = MaterialTheme.colorScheme.background
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize()
             ) {
-                Column(
-                    modifier = Modifier.fillMaxSize()
+                // Header controls bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    // Header controls bar
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surface)
-                            .padding(horizontal = 8.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        IconButton(onClick = { viewModel.showManualBrowser = false }) {
-                            Icon(Icons.Default.Close, contentDescription = "Close Browser")
-                        }
-
-                        IconButton(
-                            onClick = { webViewInstance?.goBack() },
-                            enabled = canGoBack
-                        ) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                        }
-
-                        IconButton(
-                            onClick = { webViewInstance?.goForward() },
-                            enabled = canGoForward
-                        ) {
-                            Icon(Icons.Default.ArrowForward, contentDescription = "Forward")
-                        }
-
-                        IconButton(onClick = { webViewInstance?.reload() }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Refresh")
-                        }
-
-                        IconButton(onClick = { webViewInstance?.loadUrl("https://tomatomtl.com") }) {
-                            Icon(Icons.Default.Home, contentDescription = "Home")
-                        }
-
-                        Spacer(modifier = Modifier.weight(0.05f))
-
-                        Button(
-                            onClick = {
-                                CookieManager.getInstance().flush()
-                                viewModel.addLog("Synced manual browser cookies with the scraper.")
-                                viewModel.showManualBrowser = false
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary
-                            ),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Text("Done", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        }
+                    IconButton(onClick = { viewModel.showManualBrowser = false }) {
+                        Icon(Icons.Default.Close, contentDescription = "Close Browser")
                     }
 
-                    // Warning / Helper Banner
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    IconButton(
+                        onClick = { webViewInstance?.goBack() },
+                        enabled = canGoBack
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = "Info",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = "Solve Cloudflare checks or Log in. Session cookies will automatically be synced.",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                fontSize = 10.sp
-                            ),
-                            modifier = Modifier.weight(1f)
-                        )
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
 
-                    // Address bar
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surface)
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    IconButton(
+                        onClick = { webViewInstance?.goForward() },
+                        enabled = canGoForward
                     ) {
-                        OutlinedTextField(
-                            value = currentWebUrl,
-                            onValueChange = { currentWebUrl = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            textStyle = MaterialTheme.typography.bodySmall,
-                            shape = RoundedCornerShape(8.dp),
-                            keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Uri,
-                                imeAction = ImeAction.Search
-                            ),
-                            keyboardActions = KeyboardActions(
-                                onSearch = {
-                                    focusManager.clearFocus()
-                                    var targetUrl = currentWebUrl.trim()
-                                    if (targetUrl.isNotEmpty()) {
-                                        if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
-                                            targetUrl = "https://$targetUrl"
-                                        }
-                                        webViewInstance?.loadUrl(targetUrl)
+                        Icon(Icons.Default.ArrowForward, contentDescription = "Forward")
+                    }
+
+                    IconButton(onClick = { webViewInstance?.reload() }) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                    }
+
+                    IconButton(onClick = { webViewInstance?.loadUrl("https://tomatomtl.com") }) {
+                        Icon(Icons.Default.Home, contentDescription = "Home")
+                    }
+
+                    Spacer(modifier = Modifier.weight(0.05f))
+
+                    Button(
+                        onClick = {
+                            CookieManager.getInstance().flush()
+                            viewModel.addLog("Synced manual browser cookies with the scraper.")
+                            viewModel.showManualBrowser = false
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        ),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text("Done", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                }
+
+                // Warning / Helper Banner
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = "Info",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "Solve Cloudflare checks or Log in. Session cookies will automatically be synced.",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            fontSize = 10.sp
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // Address bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = currentWebUrl,
+                        onValueChange = { currentWebUrl = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodySmall,
+                        shape = RoundedCornerShape(8.dp),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Uri,
+                            imeAction = ImeAction.Search
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                focusManager.clearFocus()
+                                var targetUrl = currentWebUrl.trim()
+                                if (targetUrl.isNotEmpty()) {
+                                    if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
+                                        targetUrl = "https://$targetUrl"
                                     }
-                                }
-                            ),
-                            trailingIcon = {
-                                if (isWebLoading) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        strokeWidth = 2.dp
-                                    )
-                                } else if (currentWebUrl.isNotEmpty()) {
-                                    IconButton(onClick = { currentWebUrl = "" }) {
-                                        Icon(
-                                            imageVector = Icons.Default.Clear,
-                                            contentDescription = "Clear",
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
+                                    webViewInstance?.loadUrl(targetUrl)
                                 }
                             }
-                        )
-                    }
-
-                    // WebView Embed
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                    ) {
-                        AndroidView(
-                            factory = { ctx ->
-                                WebView(ctx).apply {
-                                    settings.javaScriptEnabled = true
-                                    settings.domStorageEnabled = true
-                                    settings.databaseEnabled = true
-                                    settings.userAgentString = viewModel.defaultUserAgent
-                                    webViewClient = object : WebViewClient() {
-                                        override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                                            super.onPageStarted(view, url, favicon)
-                                            isWebLoading = true
-                                            if (url != null) {
-                                                currentWebUrl = url
-                                            }
-                                        }
-
-                                        override fun onPageFinished(view: WebView?, url: String?) {
-                                            super.onPageFinished(view, url)
-                                            isWebLoading = false
-                                            canGoBack = view?.canGoBack() == true
-                                            canGoForward = view?.canGoForward() == true
-                                            if (url != null) {
-                                                currentWebUrl = url
-                                                CookieManager.getInstance().flush()
-                                            }
-                                        }
-                                    }
-                                    webChromeClient = object : WebChromeClient() {
-                                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                                            super.onProgressChanged(view, newProgress)
-                                            canGoBack = view?.canGoBack() == true
-                                            canGoForward = view?.canGoForward() == true
-                                        }
-                                    }
-                                    webViewInstance = this
-                                    loadUrl(viewModel.manualBrowserUrl)
+                        ),
+                        trailingIcon = {
+                            if (isWebLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else if (currentWebUrl.isNotEmpty()) {
+                                IconButton(onClick = { currentWebUrl = "" }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Clear,
+                                        contentDescription = "Clear",
+                                        modifier = Modifier.size(16.dp)
+                                    )
                                 }
-                            },
-                            update = { view ->
-                                webViewInstance = view
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
+                            }
+                        }
+                    )
+                }
+
+                // WebView Embed
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            WebView(ctx).apply {
+                                settings.javaScriptEnabled = true
+                                settings.domStorageEnabled = true
+                                settings.databaseEnabled = true
+                                settings.userAgentString = viewModel.defaultUserAgent
+                                webViewClient = object : WebViewClient() {
+                                    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                                        super.onPageStarted(view, url, favicon)
+                                        isWebLoading = true
+                                        if (url != null) {
+                                            currentWebUrl = url
+                                        }
+                                    }
+
+                                    override fun onPageFinished(view: WebView?, url: String?) {
+                                        super.onPageFinished(view, url)
+                                        isWebLoading = false
+                                        canGoBack = view?.canGoBack() == true
+                                        canGoForward = view?.canGoForward() == true
+                                        if (url != null) {
+                                            currentWebUrl = url
+                                            CookieManager.getInstance().flush()
+                                        }
+                                    }
+                                }
+                                webChromeClient = object : WebChromeClient() {
+                                    override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                        super.onProgressChanged(view, newProgress)
+                                        canGoBack = view?.canGoBack() == true
+                                        canGoForward = view?.canGoForward() == true
+                                    }
+                                }
+                                webViewInstance = this
+                                loadUrl(viewModel.manualBrowserUrl)
+                            }
+                        },
+                        update = { view ->
+                            webViewInstance = view
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
             }
         }
+    }
+
+    // Close the top-level Box layout wrapper
     }
 }

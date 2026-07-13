@@ -107,6 +107,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     var isScraping by mutableStateOf(false)
         private set
+    var isScrapePaused by mutableStateOf(false)
+        private set
+    var shouldSkipCurrentChapter by mutableStateOf(false)
+        private set
+
+    // Missing chapters variables
+    var isSearchingMissing by mutableStateOf(false)
+        private set
+    var missingChaptersToScrape by mutableStateOf<List<MissingChapter>>(emptyList())
+        private set
+    var missingChaptersSummary by mutableStateOf("")
+        private set
     var scrapingStatus by mutableStateOf("● Idle")
         private set
     var currentChapterNum by mutableStateOf(0)
@@ -115,6 +127,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var scrapeProgress by mutableStateOf(0f)
         private set
+
+    fun pauseScraping() {
+        if (isScraping && !isScrapePaused) {
+            isScrapePaused = true
+            addLog("Scraping session paused by user.")
+        }
+    }
+
+    fun resumeScraping() {
+        if (isScraping && isScrapePaused) {
+            isScrapePaused = false
+            addLog("Scraping session resumed.")
+        }
+    }
+
+    fun skipCurrentChapter() {
+        if (isScraping) {
+            shouldSkipCurrentChapter = true
+            addLog("Skip requested for current chapter.")
+        }
+    }
 
     // CAPTCHA verification variables
     var showCaptchaDialog by mutableStateOf(false)
@@ -161,6 +194,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         isScraping = true
+        isScrapePaused = false
+        shouldSkipCurrentChapter = false
         clearLogs()
         if (bookName.isNotEmpty()) {
             addLog("Initiating Scrape Session for: $bookName")
@@ -182,6 +217,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } finally {
                 withContext(Dispatchers.Main) {
                     isScraping = false
+                    isScrapePaused = false
+                    shouldSkipCurrentChapter = false
                     scrapeProgress = 0f
                 }
             }
@@ -191,12 +228,215 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun stopScraping() {
         addLog("Stopping scrape session...")
         scrapingStatus = "● Stopping..."
+        isScrapePaused = false
+        shouldSkipCurrentChapter = false
         scrapeJob?.cancel()
         captchaContinuation?.cancel()
         isScraping = false
     }
 
-    private suspend fun runScraperLoop(url: String, bookName: String) {
+    fun searchMissingChapters() {
+        if (isSearchingMissing || isScraping) return
+        val url = scrapeUrl.trim()
+        if (url.isEmpty()) {
+            addLog("ERROR: Please enter a Novel or Chapter URL!")
+            return
+        }
+        isSearchingMissing = true
+        missingChaptersToScrape = emptyList()
+        missingChaptersSummary = ""
+        clearLogs()
+        addLog("Starting search for missing chapters...")
+        
+        viewModelScope.launch(Dispatchers.IO) {
+            val bookId = TomatoScraper.parseBookId(url) ?: "novel_${System.currentTimeMillis()}"
+            val bookUrl = if (url.contains("/book/")) {
+                val idx = url.indexOf("/book/")
+                val bookPart = url.substring(idx)
+                val segments = bookPart.split("/").filter { it.isNotEmpty() }
+                if (segments.size >= 2) {
+                    "https://tomatomtl.com/book/${segments[1]}"
+                } else url
+            } else url
+
+            addLog("Initializing WebView to fetch Table of Contents...")
+            val webView = withContext(Dispatchers.Main) {
+                WebView(getApplication<Application>().applicationContext).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.databaseEnabled = true
+                    settings.userAgentString = defaultUserAgent
+                }
+            }
+
+            try {
+                // Fetch chapter list (TOC)
+                var chapterUrls = emptyList<String>()
+                var tries = 0
+                while (chapterUrls.isEmpty() && tries < 3) {
+                    try {
+                        chapterUrls = TomatoScraper.scrapeChapterList(webView, bookUrl)
+                        if (chapterUrls.isEmpty()) {
+                            withContext(Dispatchers.Main) {
+                                webView.loadUrl(bookUrl)
+                            }
+                            delay(5000)
+                            chapterUrls = TomatoScraper.scrapeChapterList(webView, bookUrl)
+                        }
+                    } catch (e: CloudflareException) {
+                        addLog("Cloudflare detected. Attempting to bypass...")
+                        handleCaptchaChallenge(bookUrl)
+                    } catch (e: Exception) {
+                        tries++
+                        addLog("TOC fetch retry $tries/3: ${e.message}")
+                        delay(2000)
+                    }
+                }
+
+                if (chapterUrls.isEmpty()) {
+                    addLog("ERROR: Could not fetch Table of Contents.")
+                    withContext(Dispatchers.Main) {
+                        isSearchingMissing = false
+                        missingChaptersSummary = "Could not load Table of Contents."
+                    }
+                    return@launch
+                }
+
+                addLog("TOC loaded: ${chapterUrls.size} chapters found.")
+                
+                // Fetch local chapters
+                val localChapters = repository.getChapters(bookId)
+                val localUrls = localChapters.map { it.url }.toSet()
+                val localNums = localChapters.map { it.chapterNumber }.toSet()
+
+                val missingList = mutableListOf<MissingChapter>()
+                for ((index, chapUrl) in chapterUrls.withIndex()) {
+                    val chapNum = index + 1
+                    if (!localUrls.contains(chapUrl) && !localNums.contains(chapNum)) {
+                        missingList.add(MissingChapter(chapUrl, chapNum))
+                    }
+                }
+
+                withContext(Dispatchers.Main) {
+                    missingChaptersToScrape = missingList
+                    if (missingList.isEmpty()) {
+                        missingChaptersSummary = "All ${chapterUrls.size} chapters are already downloaded!"
+                        addLog("All chapters are already downloaded locally.")
+                    } else {
+                        missingChaptersSummary = "Found ${missingList.size} missing chapters."
+                        addLog("Found ${missingList.size} missing chapters out of ${chapterUrls.size} total chapters.")
+                    }
+                    isSearchingMissing = false
+                }
+            } catch (e: Exception) {
+                addLog("ERROR: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    isSearchingMissing = false
+                    missingChaptersSummary = "Error during search: ${e.message}"
+                }
+            }
+        }
+    }
+
+    fun startScrapingMissing() {
+        if (isScraping) return
+        val url = scrapeUrl.trim()
+        val bookName = scrapeBookName.trim()
+
+        if (url.isEmpty()) {
+            addLog("ERROR: Please enter a Novel or Chapter URL!")
+            return
+        }
+
+        if (missingChaptersToScrape.isEmpty()) {
+            addLog("ERROR: No missing chapters found to scrape. Run search first!")
+            return
+        }
+
+        isScraping = true
+        isScrapePaused = false
+        shouldSkipCurrentChapter = false
+        clearLogs()
+        addLog("Initiating Scrape Session for ${missingChaptersToScrape.size} Missing Chapters.")
+        scrapingStatus = "● Starting..."
+
+        scrapeJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                runScraperLoop(url, bookName, missingChaptersToScrape)
+            } catch (e: CancellationException) {
+                scrapingStatus = "● Cancelled"
+                addLog("Scraping session cancelled by user.")
+            } catch (e: Exception) {
+                scrapingStatus = "● Error: ${e.message}"
+                addLog("CRITICAL ERROR: ${e.message}")
+                e.printStackTrace()
+            } finally {
+                withContext(Dispatchers.Main) {
+                    isScraping = false
+                    isScrapePaused = false
+                    shouldSkipCurrentChapter = false
+                    scrapeProgress = 0f
+                }
+            }
+        }
+    }
+
+    fun continueScraping() {
+        if (isScraping) return
+        val url = scrapeUrl.trim()
+        if (url.isEmpty()) {
+            addLog("ERROR: Please enter a Novel or Chapter URL!")
+            return
+        }
+        val bookId = TomatoScraper.parseBookId(url)
+        if (bookId == null) {
+            addLog("ERROR: Could not determine Novel ID from URL.")
+            return
+        }
+        
+        isScraping = true
+        isScrapePaused = false
+        shouldSkipCurrentChapter = false
+        clearLogs()
+        addLog("Finding last downloaded chapter to continue...")
+        scrapingStatus = "● Initializing..."
+
+        scrapeJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val existingChapters = repository.getChapters(bookId)
+                val maxChapterNum = existingChapters.maxOfOrNull { it.chapterNumber } ?: 0
+                addLog("Last downloaded chapter number: $maxChapterNum")
+                
+                withContext(Dispatchers.Main) {
+                    fromChapterInput = (maxChapterNum + 1).toString()
+                    toChapterInput = "" // all remaining
+                    addLog("Resuming scrape from Chapter ${maxChapterNum + 1}")
+                }
+                
+                runScraperLoop(url, scrapeBookName.trim())
+            } catch (e: CancellationException) {
+                scrapingStatus = "● Cancelled"
+                addLog("Scraping session cancelled by user.")
+            } catch (e: Exception) {
+                scrapingStatus = "● Error: ${e.message}"
+                addLog("CRITICAL ERROR: ${e.message}")
+                e.printStackTrace()
+            } finally {
+                withContext(Dispatchers.Main) {
+                    isScraping = false
+                    isScrapePaused = false
+                    shouldSkipCurrentChapter = false
+                    scrapeProgress = 0f
+                }
+            }
+        }
+    }
+
+    private suspend fun runScraperLoop(
+        url: String,
+        bookName: String,
+        specificChapters: List<MissingChapter>? = null
+    ) {
         val bookId = TomatoScraper.parseBookId(url) ?: "novel_${System.currentTimeMillis()}"
         val bookUrl = if (url.contains("/book/")) {
             val idx = url.indexOf("/book/")
@@ -276,47 +516,66 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 addLog("TOC loaded: ${chapterUrls.size} chapters found.")
             }
 
-            // Determine starting indices
-            val maxCap = maxChaptersInput.toIntOrNull() ?: 0
-            val fromCap = fromChapterInput.toIntOrNull() ?: 1
-            val toCap = toChapterInput.toIntOrNull() ?: 0
+            // Determine chapters to process (either supplied missing list or range-based list)
+            val chaptersToProcess = specificChapters ?: run {
+                val maxCap = maxChaptersInput.toIntOrNull() ?: 0
+                val fromCap = fromChapterInput.toIntOrNull() ?: 1
+                val toCap = toChapterInput.toIntOrNull() ?: 0
 
-            // Filter the URLs to download
-            val startIndex = (fromCap - 1).coerceAtLeast(0)
-            var filteredUrls = if (chapterUrls.isNotEmpty() && startIndex < chapterUrls.size) {
-                chapterUrls.subList(startIndex, chapterUrls.size)
-            } else {
-                listOf(url) // paste chapter URL fallback
+                // Filter the URLs to download
+                val startIndex = (fromCap - 1).coerceAtLeast(0)
+                var filteredUrls = if (chapterUrls.isNotEmpty() && startIndex < chapterUrls.size) {
+                    chapterUrls.subList(startIndex, chapterUrls.size)
+                } else {
+                    listOf(url) // paste chapter URL fallback
+                }
+
+                if (toCap > 0 && toCap >= fromCap && toCap - fromCap + 1 <= filteredUrls.size) {
+                    filteredUrls = filteredUrls.subList(0, toCap - fromCap + 1)
+                }
+
+                if (maxCap > 0 && maxCap < filteredUrls.size) {
+                    filteredUrls = filteredUrls.subList(0, maxCap)
+                }
+
+                filteredUrls.mapIndexed { idx, chapUrl ->
+                    MissingChapter(chapUrl, idx + fromCap)
+                }
             }
 
-            if (toCap > 0 && toCap >= fromCap && toCap - fromCap + 1 <= filteredUrls.size) {
-                filteredUrls = filteredUrls.subList(0, toCap - fromCap + 1)
-            }
-
-            if (maxCap > 0 && maxCap < filteredUrls.size) {
-                filteredUrls = filteredUrls.subList(0, maxCap)
-            }
-
-            totalChaptersToScrape = filteredUrls.size
+            totalChaptersToScrape = chaptersToProcess.size
             addLog("Preparing to scrape $totalChaptersToScrape chapters...")
 
             var sessionDownloadedCount = 0
             val glossaries = repository.getGlossary(currentBookState.id)
 
-            for ((index, chapterUrl) in filteredUrls.withIndex()) {
+            for ((index, item) in chaptersToProcess.withIndex()) {
+                if (!isScraping) break
+
+                val chapterUrl = item.url
+                val absoluteChapterNum = item.chapterNumber
+
+                shouldSkipCurrentChapter = false // reset for each chapter
+
+                // Wait if paused
+                while (isScrapePaused && isScraping) {
+                    scrapingStatus = "● Paused (${index + 1}/$totalChaptersToScrape)"
+                    delay(500)
+                }
+
                 if (!isScraping) break
 
                 currentChapterNum = index + 1
                 scrapeProgress = currentChapterNum.toFloat() / totalChaptersToScrape
                 scrapingStatus = "● Downloading ($currentChapterNum/$totalChaptersToScrape)..."
 
-                val chapId = TomatoScraper.parseChapterId(chapterUrl) ?: "ch_$currentChapterNum"
+                val chapId = TomatoScraper.parseChapterId(chapterUrl) ?: "ch_$absoluteChapterNum"
                 val fullChapId = "${currentBookState.id}_$chapId"
 
                 // Check if already downloaded locally
                 val existing = repository.getChapter(fullChapId)
                 if (existing != null && existing.content.length > 100) {
-                    addLog("Chapter ${index + fromCap} already downloaded. Skipping.")
+                    addLog("Chapter $absoluteChapterNum already downloaded. Skipping.")
                     continue
                 }
 
@@ -324,8 +583,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 var tries = 0
 
                 while (!downloadSuccess && tries < 3 && isScraping) {
+                    if (shouldSkipCurrentChapter) {
+                        break
+                    }
                     try {
-                        val rawContent = TomatoScraper.scrapeChapterContent(webView, chapterUrl)
+                        val rawContent = TomatoScraper.scrapeChapterContent(webView, chapterUrl) { shouldSkipCurrentChapter }
                         val title = rawContent.first
                         var cleanedBody = TomatoScraper.sanitizeText(rawContent.second, aggressiveClean)
 
@@ -342,7 +604,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             id = fullChapId,
                             bookId = currentBookState.id,
                             chapterId = chapId,
-                            chapterNumber = index + fromCap,
+                            chapterNumber = absoluteChapterNum,
                             title = title,
                             url = chapterUrl,
                             content = cleanedBody,
@@ -368,13 +630,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     } catch (e: Exception) {
                         tries++
+                        if (shouldSkipCurrentChapter) {
+                            break
+                        }
                         addLog("Error on chapter $currentChapterNum, retry $tries/3: ${e.message}")
                         delay(3000)
                     }
                 }
 
+                if (shouldSkipCurrentChapter) {
+                    addLog("Skipped Chapter $absoluteChapterNum by user request.")
+                    shouldSkipCurrentChapter = false
+                    continue
+                }
+
                 // Simple random delay to respect scraping etiquette and prevent bans (just like desktop engine!)
-                if (isScraping && index < filteredUrls.size - 1) {
+                if (isScraping && index < chaptersToProcess.size - 1) {
                     val delayTime = (1000L..2500L).random()
                     delay(delayTime)
                 }
@@ -686,7 +957,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 addAction("com.example.ACTION_NEXT_CHAPTER")
                 addAction("com.example.ACTION_STOP_TTS")
             }
-            context.registerReceiver(ttsReceiver, filter)
+            androidx.core.content.ContextCompat.registerReceiver(
+                context,
+                ttsReceiver,
+                filter,
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+            )
             isReceiverRegistered = true
         }
     }
@@ -737,9 +1013,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 
                 var finalVoices = availableVoices.distinctBy { it.id }
-                if (premiumVoiceDownloaded) {
-                    finalVoices = listOf(VoiceOption("premium_piper", "Premium Offline Voice (Piper TTS)", Locale.US)) + finalVoices
-                }
+                finalVoices = listOf(VoiceOption("premium_piper", "Premium Offline Voice (Piper TTS)", Locale.US)) + finalVoices
                 ttsVoices = finalVoices
 
                 val savedVoice = prefs.getString("tts_selected_voice", "") ?: ""
@@ -1503,3 +1777,9 @@ data class DiscoveryItem(
 // Simple extension helper
 val Context.filesDirs: File
     get() = this.filesDir
+
+data class MissingChapter(
+    val url: String,
+    val chapterNumber: Int
+)
+

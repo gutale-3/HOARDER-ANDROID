@@ -81,7 +81,8 @@ object TomatoScraper {
         webView: WebView,
         url: String,
         checkReadyJs: String,
-        maxWaitSeconds: Int = 30
+        maxWaitSeconds: Int = 30,
+        shouldSkip: () -> Boolean = { false }
     ): String {
         return withContext(Dispatchers.Main) {
             try {
@@ -95,7 +96,9 @@ object TomatoScraper {
             var result = "null"
             while (attempts < totalAttempts) {
                 delay(500)
-                if (!coroutineContext.isActive) break
+                if (!coroutineContext.isActive || shouldSkip()) {
+                    break
+                }
 
                 // Check if WebView is still showing the old page
                 val isOld = webView.evaluateJs("window.__oldPage === true")
@@ -288,7 +291,11 @@ object TomatoScraper {
         return urls
     }
 
-    suspend fun scrapeChapterContent(webView: WebView, chapterUrl: String): Pair<String, String> {
+    suspend fun scrapeChapterContent(
+        webView: WebView,
+        chapterUrl: String,
+        shouldSkip: () -> Boolean = { false }
+    ): Pair<String, String> {
         val checkJs = """
             (() => {
                 const art = document.querySelector('#chapter_content');
@@ -305,7 +312,7 @@ object TomatoScraper {
             })()
         """.trimIndent()
 
-        val jsonStr = loadUrlAndWait(webView, chapterUrl, checkJs, 35)
+        val jsonStr = loadUrlAndWait(webView, chapterUrl, checkJs, 35, shouldSkip)
         if (jsonStr == "null" || jsonStr == "\"null\"" || jsonStr.trim().isEmpty()) {
             throw IOException("Failed to scrape chapter text content")
         }

@@ -15,11 +15,19 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE id = :id")
     fun getBookByIdFlow(id: String): Flow<BookEntity?>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertBook(book: BookEntity)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertBookInternal(book: BookEntity): Long
 
     @Update
     suspend fun updateBook(book: BookEntity)
+
+    @Transaction
+    suspend fun insertBook(book: BookEntity) {
+        val rowId = insertBookInternal(book)
+        if (rowId == -1L) {
+            updateBook(book)
+        }
+    }
 
     @Query("DELETE FROM books WHERE id = :id")
     suspend fun deleteBookById(id: String)
