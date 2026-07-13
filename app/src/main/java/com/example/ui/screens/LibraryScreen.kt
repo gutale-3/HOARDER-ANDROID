@@ -134,6 +134,22 @@ fun LibraryScreen(
                             if (ok) shareFile(context, File(path), "application/pdf")
                         }
                     },
+                    onReScrape = {
+                        viewModel.reScrapeBook(book)
+                        android.widget.Toast.makeText(
+                            context,
+                            "Re-scraping '${book.title}' — open the Scrape tab to watch progress.",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    },
+                    onFindMissing = {
+                        viewModel.findMissingChaptersForBook(book)
+                        android.widget.Toast.makeText(
+                            context,
+                            "Searching for missing/new chapters — see the Scrape tab.",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    },
                     onDelete = {
                         activeDeleteBook = book
                         showDeleteConfirmDialog = true
@@ -200,6 +216,8 @@ fun LibraryBookItem(
     onGlossary: () -> Unit,
     onExportEpub: () -> Unit,
     onExportPdf: () -> Unit,
+    onReScrape: () -> Unit,
+    onFindMissing: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -320,6 +338,23 @@ fun LibraryBookItem(
                                         onExportPdf()
                                     },
                                     leadingIcon = { Icon(Icons.Default.CloudDownload, contentDescription = null) }
+                                )
+                                Divider()
+                                DropdownMenuItem(
+                                    text = { Text("Find Missing / New Chapters") },
+                                    onClick = {
+                                        expandedMenu = false
+                                        onFindMissing()
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Re-scrape Novel") },
+                                    onClick = {
+                                        expandedMenu = false
+                                        onReScrape()
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) }
                                 )
                                 Divider()
                                 DropdownMenuItem(

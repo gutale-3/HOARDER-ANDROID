@@ -20,6 +20,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.local.*
 import com.example.data.repository.NovelRepository
 import com.example.data.ai.SherpaOnnxTtsEngine
+import com.example.data.ai.PiperVoice
+import com.example.data.ai.PiperVoiceCatalog
 import com.example.ui.theme.AppTheme
 import com.example.util.CloudflareException
 import com.example.util.NovelCompiler
@@ -38,6 +40,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
 
     var focusModeEnabled by mutableStateOf(false)
+    var autoScrollEnabled by mutableStateOf(true)
     var ttsTotalParagraphs by mutableStateOf(0)
 
     // Resumable session state
@@ -85,6 +88,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         activeAiProviderId = prefs.getString("active_ai_provider", "gemini_cloud") ?: "gemini_cloud"
         userGeminiApiKey = prefs.getString("gemini_api_key", "") ?: ""
         focusModeEnabled = prefs.getBoolean("focus_mode", false)
+        autoScrollEnabled = prefs.getBoolean("auto_scroll", true)
         registerTtsReceiver()
         loadResumableTtsSession()
     }
@@ -806,52 +810,85 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var ttsSpeed by mutableStateOf(1.0f)
     var ttsActiveParagraphIndex by mutableStateOf<Int?>(-1)
 
-    // Premium Piper offline voice properties
+    // --- Offline neural (Piper / sherpa-onnx) voices ---
     val sherpaOnnxTtsEngine = SherpaOnnxTtsEngine(getApplication())
-    var premiumVoiceDownloaded by mutableStateOf(sherpaOnnxTtsEngine.isModelDownloaded())
+
+    // Full downloadable catalog (shown in the voice picker).
+    val piperCatalog: List<PiperVoice> = PiperVoiceCatalog.voices
+
+    // Which catalog voices are installed on disk.
+    var installedPiperVoiceIds by mutableStateOf<Set<String>>(emptySet())
         private set
-    var premiumVoiceDownloading by mutableStateOf(false)
+    // Currently downloading voice id (catalog id, e.g. "en_US-amy-low") or null.
+    var downloadingPiperId by mutableStateOf<String?>(null)
         private set
-    var premiumVoiceDownloadProgress by mutableStateOf(0)
+    var piperDownloadProgress by mutableStateOf(0)
         private set
-    var premiumVoiceDownloadError by mutableStateOf<String?>(null)
+    var piperDownloadError by mutableStateOf<String?>(null)
         private set
 
-    fun downloadPremiumVoice() {
-        if (premiumVoiceDownloaded || premiumVoiceDownloading) return
-        premiumVoiceDownloading = true
-        premiumVoiceDownloadError = null
-        viewModelScope.launch(Dispatchers.Main) {
-            sherpaOnnxTtsEngine.downloadModel(
-                onProgress = { progress ->
-                    premiumVoiceDownloadProgress = progress
-                },
+    fun refreshInstalledPiperVoices() {
+        installedPiperVoiceIds = sherpaOnnxTtsEngine.installedVoices().map { it.id }.toSet()
+    }
+
+    fun isPiperVoiceInstalled(voice: PiperVoice): Boolean =
+        installedPiperVoiceIds.contains(voice.id)
+
+    fun downloadPiperVoice(voice: PiperVoice) {
+        if (downloadingPiperId != null || isPiperVoiceInstalled(voice)) return
+        downloadingPiperId = voice.id
+        piperDownloadProgress = 0
+        piperDownloadError = null
+        viewModelScope.launch(Dispatchers.IO) {
+            sherpaOnnxTtsEngine.downloadVoice(
+                voice = voice,
+                onProgress = { p -> viewModelScope.launch(Dispatchers.Main) { piperDownloadProgress = p } },
                 onSuccess = {
-                    premiumVoiceDownloaded = true
-                    premiumVoiceDownloading = false
-                    initTts()
-                    addLog("Premium Offline Voice (Piper) downloaded successfully.")
+                    viewModelScope.launch(Dispatchers.Main) {
+                        downloadingPiperId = null
+                        refreshInstalledPiperVoices()
+                        rebuildVoiceList()
+                        addLog("Piper voice '${voice.displayName}' installed.")
+                    }
                 },
-                onFailure = { error ->
-                    premiumVoiceDownloadError = error
-                    premiumVoiceDownloading = false
-                    addLog("Error downloading Premium Offline Voice: $error")
+                onFailure = { err ->
+                    viewModelScope.launch(Dispatchers.Main) {
+                        downloadingPiperId = null
+                        piperDownloadError = err
+                        addLog("Error downloading Piper voice: $err")
+                    }
                 }
             )
         }
     }
 
-    fun deletePremiumVoice() {
-        if (sherpaOnnxTtsEngine.deleteModel()) {
-            premiumVoiceDownloaded = false
-            if (selectedVoiceId == "premium_piper") {
-                val defaultVoice = ttsVoices.find { it.id.startsWith("default_") } ?: ttsVoices.firstOrNull()
-                defaultVoice?.let { setTtsVoice(it) }
+    fun deletePiperVoice(voice: PiperVoice) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = sherpaOnnxTtsEngine.deleteVoice(voice)
+            withContext(Dispatchers.Main) {
+                if (ok) {
+                    if (selectedVoiceId == voice.voiceId) {
+                        val fallback = ttsVoices.firstOrNull { it.engine == VoiceEngine.SYSTEM }
+                        fallback?.let { setTtsVoice(it) }
+                    }
+                    refreshInstalledPiperVoices()
+                    rebuildVoiceList()
+                    addLog("Piper voice '${voice.displayName}' deleted.")
+                }
             }
-            initTts()
-            addLog("Premium Offline Voice (Piper) model file deleted.")
         }
     }
+
+    /** Rebuilds [ttsVoices] = installed Piper voices + enumerated system voices. */
+    fun rebuildVoiceList() {
+        val piperVoices = sherpaOnnxTtsEngine.installedVoices().map {
+            VoiceOption(it.voiceId, "★ ${it.displayName}", Locale.US, VoiceEngine.PIPER)
+        }
+        ttsVoices = piperVoices + systemVoices
+    }
+
+    // System voices are cached here after initTts enumerates the device engine.
+    private var systemVoices: List<VoiceOption> = emptyList()
 
     // Sleep Timer state
     var sleepTimerMinutes by mutableStateOf(0) // 0 means Never / Off
@@ -1051,10 +1088,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     availableVoices.add(VoiceOption("default_en_gb", "English (United Kingdom) - Default", Locale.UK))
                     availableVoices.add(VoiceOption("default_system", "System Default", Locale.getDefault()))
                 }
-                
-                var finalVoices = availableVoices.distinctBy { it.id }
-                finalVoices = listOf(VoiceOption("premium_piper", "Premium Offline Voice (Piper TTS)", Locale.US)) + finalVoices
-                ttsVoices = finalVoices
+
+                // Cache the enumerated system voices, then merge installed Piper voices on top.
+                systemVoices = availableVoices.distinctBy { it.id }
+                refreshInstalledPiperVoices()
+                rebuildVoiceList()
 
                 val savedVoice = prefs.getString("tts_selected_voice", "") ?: ""
                 if (savedVoice.isNotEmpty()) {
@@ -1080,25 +1118,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setTtsVoice(voiceOption: VoiceOption) {
         selectedVoiceId = voiceOption.id
         prefs.edit().putString("tts_selected_voice", voiceOption.id).apply()
-        if (voiceOption.id == "premium_piper") {
-            // Handled internally by the premium voice synthesizer
-        } else if (voiceOption.id.startsWith("default_")) {
-            tts?.setLanguage(voiceOption.locale)
-        } else {
-            try {
-                val rawVoices = tts?.voices
-                val actualVoice = rawVoices?.find { it.name == voiceOption.id }
-                if (actualVoice != null) {
-                    tts?.setVoice(actualVoice)
-                } else {
+
+        // Always silence BOTH engines before switching so two voices can never
+        // play at once (previously switching away from Piper left it running).
+        stopEngines()
+
+        if (voiceOption.engine == VoiceEngine.SYSTEM) {
+            if (voiceOption.id.startsWith("default_")) {
+                tts?.setLanguage(voiceOption.locale)
+            } else {
+                try {
+                    val actualVoice = tts?.voices?.find { it.name == voiceOption.id }
+                    if (actualVoice != null) tts?.setVoice(actualVoice)
+                    else tts?.setLanguage(voiceOption.locale)
+                } catch (e: Exception) {
                     tts?.setLanguage(voiceOption.locale)
                 }
-            } catch (e: Exception) {
-                tts?.setLanguage(voiceOption.locale)
             }
         }
-        
-        // INSTANTANEOUS UPDATE: Restart speaking from current paragraph
+
+        // INSTANTANEOUS UPDATE: Restart speaking from current paragraph.
         if (ttsIsPlaying) {
             val book = ttsPlayingBook
             val chapter = ttsPlayingChapter
@@ -1106,6 +1145,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 speak(chapter.content, book, chapter, startFromParagraphIndex = ttsActiveParagraphIndex ?: 0)
             }
         }
+    }
+
+    /** Stops both the system and the Piper engines. */
+    private fun stopEngines() {
+        try { sherpaOnnxTtsEngine.stop() } catch (_: Throwable) {}
+        try { tts?.stop() } catch (_: Throwable) {}
     }
 
     fun updateTtsSettings(pitch: Float, speed: Float) {
@@ -1219,7 +1264,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun seekToParagraph(index: Int) {
         val book = ttsPlayingBook ?: return
         val chapter = ttsPlayingChapter ?: return
-        val clampedIndex = index.coerceIn(-1, ttsTotalParagraphs - 1)
+        val clampedIndex = index.coerceIn(0, maxOf(0, ttsTotalParagraphs - 1))
         speak(chapter.content, book, chapter, startFromParagraphIndex = clampedIndex)
     }
 
@@ -1229,73 +1274,83 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         seekToParagraph(next)
     }
 
+    fun toggleAutoScroll() {
+        autoScrollEnabled = !autoScrollEnabled
+        prefs.edit().putBoolean("auto_scroll", autoScrollEnabled).apply()
+    }
+
     fun toggleFocusMode() {
         focusModeEnabled = !focusModeEnabled
         prefs.edit().putBoolean("focus_mode", focusModeEnabled).apply()
     }
 
+    // --- Paragraph cache: avoid re-hitting the DB / re-applying glossary on every
+    // seek or skip within the same chapter. ---
+    private var cachedParaChapterId: String? = null
+    private var cachedParagraphs: List<String> = emptyList()
+
+    private suspend fun paragraphsFor(book: BookEntity, chapter: ChapterEntity): List<String> {
+        if (cachedParaChapterId == chapter.id && cachedParagraphs.isNotEmpty()) return cachedParagraphs
+        val glossary = repository.getGlossary(book.id)
+        val cleanText = repository.applyGlossary(chapter.content, glossary)
+        val paras = cleanText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+        cachedParaChapterId = chapter.id
+        cachedParagraphs = paras
+        return paras
+    }
+
     fun speak(text: String, book: BookEntity, chapter: ChapterEntity, startFromParagraphIndex: Int = -1) {
-        // Save chapter progress
+        // Persist chapter progress (so resume + reader stay in sync, incl. auto-advance).
         viewModelScope.launch(Dispatchers.IO) {
-            val updatedBook = book.copy(lastReadChapterId = chapter.id)
-            repository.updateBook(updatedBook)
+            repository.updateBook(book.copy(lastReadChapterId = chapter.id))
         }
 
-        if (selectedVoiceId == "premium_piper" && premiumVoiceDownloaded) {
+        val selVoice = ttsVoices.find { it.id == selectedVoiceId }
+        val piperVoice = if (selVoice?.engine == VoiceEngine.PIPER)
+            PiperVoiceCatalog.byVoiceId(selVoice.id) else null
+
+        // --- Offline neural (Piper) path ---
+        if (piperVoice != null && isPiperVoiceInstalled(piperVoice)) {
             viewModelScope.launch(Dispatchers.Main) {
                 ttsPlayingBook = book
                 ttsPlayingChapter = chapter
                 ttsIsPlaying = true
                 ttsIsPaused = false
+                stopEngines()
 
-                // Stop any other standard TTS
-                tts?.stop()
+                val paragraphs = withContext(Dispatchers.IO) { paragraphsFor(book, chapter) }
+                ttsTotalParagraphs = paragraphs.size
+                val startIdx = if (startFromParagraphIndex < 0) 0
+                    else startFromParagraphIndex.coerceIn(0, maxOf(0, paragraphs.size - 1))
+                ttsActiveParagraphIndex = startIdx
 
-                val glossary = repository.getGlossary(book.id)
-                val cleanText = repository.applyGlossary(text, glossary)
-                val rawParagraphs = cleanText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-                ttsTotalParagraphs = rawParagraphs.size
-
-                if (startFromParagraphIndex < 0) {
-                    ttsActiveParagraphIndex = -1
-                } else {
-                    ttsActiveParagraphIndex = startFromParagraphIndex
-                }
-
-                val textToSpeak = if (startFromParagraphIndex >= 0) {
-                    rawParagraphs.drop(startFromParagraphIndex).joinToString("\n")
-                } else {
-                    chapter.title + "\n" + cleanText
-                }
-
-                sherpaOnnxTtsEngine.initOnnx()
-                sherpaOnnxTtsEngine.speak(
-                    text = textToSpeak,
+                val started = sherpaOnnxTtsEngine.speak(
+                    voice = piperVoice,
+                    paragraphs = paragraphs,
+                    startIndex = startIdx,
                     speed = ttsSpeed,
-                    pitch = ttsPitch,
-                    onStart = { premiumIdx ->
-                        viewModelScope.launch(Dispatchers.Main) {
-                            ttsActiveParagraphIndex = if (startFromParagraphIndex >= 0) {
-                                startFromParagraphIndex + premiumIdx
-                            } else {
-                                premiumIdx - 1
-                            }
-                            saveTtsProgress()
-                            loadResumableTtsSession()
-                        }
+                    onParagraphStart = { idx ->
+                        ttsActiveParagraphIndex = idx
+                        saveTtsProgress()
+                        loadResumableTtsSession()
                     },
-                    onDone = {
-                        viewModelScope.launch(Dispatchers.Main) {
-                            playNextChapterTts()
-                        }
-                    }
+                    onDone = { playNextChapterTts() }
                 )
-
-                showTtsNotification()
+                if (started) {
+                    showTtsNotification()
+                } else {
+                    addLog("Piper native engine unavailable; falling back to system voice.")
+                    speakWithSystem(book, chapter, startFromParagraphIndex)
+                }
             }
             return
         }
 
+        // --- System TextToSpeech path ---
+        speakWithSystem(book, chapter, startFromParagraphIndex)
+    }
+
+    private fun speakWithSystem(book: BookEntity, chapter: ChapterEntity, startFromParagraphIndex: Int) {
         initTts {
             viewModelScope.launch(Dispatchers.Main) {
                 ttsPlayingBook = book
@@ -1305,27 +1360,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 tts?.setPitch(ttsPitch)
                 tts?.setSpeechRate(ttsSpeed)
+                stopEngines()
 
-                // Retrieve glossary replacements for clean speech
-                val glossary = repository.getGlossary(book.id)
-                val cleanText = repository.applyGlossary(text, glossary)
-
-                // Filter out html/extra characters and split to avoid 4000 char limits
-                val rawParagraphs = cleanText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                val rawParagraphs = withContext(Dispatchers.IO) { paragraphsFor(book, chapter) }
                 ttsTotalParagraphs = rawParagraphs.size
-                
-                tts?.stop()
-
-                if (startFromParagraphIndex < 0) {
-                    // Speak title first
-                    tts?.speak(chapter.title, TextToSpeech.QUEUE_ADD, null, "title_${chapter.id}")
-                    ttsActiveParagraphIndex = -1
-                } else {
-                    ttsActiveParagraphIndex = startFromParagraphIndex
-                }
+                val startIdx = if (startFromParagraphIndex < 0) 0
+                    else startFromParagraphIndex.coerceIn(0, maxOf(0, rawParagraphs.size - 1))
+                ttsActiveParagraphIndex = startIdx
 
                 rawParagraphs.forEachIndexed { idx, para ->
-                    if (idx >= startFromParagraphIndex) {
+                    if (idx >= startIdx) {
                         tts?.speak(para, TextToSpeech.QUEUE_ADD, null, "para_${chapter.id}_$idx")
                     }
                 }
@@ -1334,29 +1378,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
-                        if (utteranceId != null) {
-                            if (utteranceId.startsWith("para_${chapter.id}_")) {
-                                val idxStr = utteranceId.substringAfterLast("_")
-                                val idx = idxStr.toIntOrNull()
-                                if (idx != null) {
-                                    viewModelScope.launch(Dispatchers.Main) {
-                                        ttsActiveParagraphIndex = idx
-                                        saveTtsProgress()
-                                        loadResumableTtsSession()
-                                    }
-                                }
-                            } else if (utteranceId.startsWith("title_")) {
+                        if (utteranceId != null && utteranceId.startsWith("para_${chapter.id}_")) {
+                            val idx = utteranceId.substringAfterLast("_").toIntOrNull()
+                            if (idx != null) {
                                 viewModelScope.launch(Dispatchers.Main) {
-                                    ttsActiveParagraphIndex = -1
+                                    ttsActiveParagraphIndex = idx
                                     saveTtsProgress()
                                     loadResumableTtsSession()
                                 }
                             }
                         }
                     }
-                    
+
                     override fun onDone(utteranceId: String?) {
-                        if (utteranceId != null && utteranceId.startsWith("para_${chapter.id}_${rawParagraphs.size - 1}")) {
+                        if (utteranceId != null &&
+                            utteranceId.startsWith("para_${chapter.id}_${rawParagraphs.size - 1}")) {
                             viewModelScope.launch(Dispatchers.Main) {
                                 playNextChapterTts()
                             }
@@ -1412,11 +1448,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun pauseTts() {
         if (ttsIsPlaying) {
-            if (selectedVoiceId == "premium_piper") {
-                sherpaOnnxTtsEngine.stop()
-            } else {
-                tts?.stop()
-            }
+            stopEngines()
             ttsIsPlaying = false
             ttsIsPaused = true
             showTtsNotification()
@@ -1432,11 +1464,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopTts() {
-        if (selectedVoiceId == "premium_piper") {
-            sherpaOnnxTtsEngine.stop()
-        } else {
-            tts?.stop()
-        }
+        stopEngines()
         ttsPlayingBook = null
         ttsPlayingChapter = null
         ttsIsPlaying = false
@@ -1445,6 +1473,74 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         dismissTtsNotification()
         clearTtsProgress()
         hasResumableSession = false
+    }
+
+    // --- Library maintenance: re-scrape a wrong chapter / find missing chapters ---
+    var isReScraping by mutableStateOf(false)
+        private set
+    var reScrapeStatus by mutableStateOf<String?>(null)
+
+    /**
+     * Re-downloads a single chapter's content in place (for "I'm on chapter 5 and
+     * it scraped wrong"). Updates the stored content and invalidates the TTS cache.
+     */
+    fun reScrapeChapter(chapter: ChapterEntity, onDone: (Boolean) -> Unit = {}) {
+        if (isReScraping) return
+        isReScraping = true
+        reScrapeStatus = "Re-fetching chapter…"
+        viewModelScope.launch(Dispatchers.IO) {
+            var ok = false
+            var errored = false
+            try {
+                val book = repository.getBook(chapter.bookId)
+                val glossaries = if (book != null) repository.getGlossary(book.id) else emptyList()
+                val webView = withContext(Dispatchers.Main) {
+                    WebView(getApplication<Application>().applicationContext).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                        settings.userAgentString = defaultUserAgent
+                    }
+                }
+                val rawContent = TomatoScraper.scrapeChapterContent(webView, chapter.url)
+                var cleanedBody = TomatoScraper.sanitizeText(rawContent.second, aggressiveClean)
+                if (glossaries.isNotEmpty()) cleanedBody = repository.applyGlossary(cleanedBody, glossaries)
+                repository.updateChapterContent(chapter.id, cleanedBody)
+                if (cachedParaChapterId == chapter.id) {
+                    cachedParaChapterId = null
+                    cachedParagraphs = emptyList()
+                }
+                ok = cleanedBody.length > 20
+                withContext(Dispatchers.Main) { webView.destroy() }
+            } catch (e: Exception) {
+                errored = true
+                reScrapeStatus = "Error: ${e.message}"
+            } finally {
+                withContext(Dispatchers.Main) {
+                    isReScraping = false
+                    if (!errored) reScrapeStatus = if (ok) "Chapter re-fetched" else "No content found"
+                    onDone(ok)
+                }
+            }
+        }
+    }
+
+    /** Re-scrapes the whole novel (database-only) to repair/refresh its chapters. */
+    fun reScrapeBook(book: BookEntity) {
+        scrapeUrl = book.url
+        scrapeBookName = book.title
+        selectedFormat = "Database only"
+        maxChaptersInput = ""
+        fromChapterInput = ""
+        toChapterInput = ""
+        startScraping()
+    }
+
+    /** Finds and downloads only chapters that are missing/new for this book. */
+    fun findMissingChaptersForBook(book: BookEntity) {
+        scrapeUrl = book.url
+        scrapeBookName = book.title
+        searchMissingChapters()
     }
 
     private fun downloadCoverAndSaveMetadata(book: BookEntity, cookies: String): BookEntity {
@@ -1920,10 +2016,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 }
 
+enum class VoiceEngine { SYSTEM, PIPER }
+
 data class VoiceOption(
     val id: String,
     val name: String,
-    val locale: java.util.Locale
+    val locale: java.util.Locale,
+    val engine: VoiceEngine = VoiceEngine.SYSTEM
 )
 
 data class DiscoveryItem(
