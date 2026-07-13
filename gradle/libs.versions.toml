@@ -43,7 +43,7 @@ credentials = "1.5.0"
 googleid = "1.1.1"
 jsoup = "1.18.1"
 mediapipeTasksGenai = "0.10.14"
-onnxruntime = "1.16.0"
+onnxruntime = "1.18.0"
 sherpaOnnx = "v1.13.4"
 commonsCompress = "1.27.1"
 

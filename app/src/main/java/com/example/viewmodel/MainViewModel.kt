@@ -26,6 +26,7 @@ import com.example.ui.theme.AppTheme
 import com.example.util.CloudflareException
 import com.example.util.NovelCompiler
 import com.example.util.TomatoScraper
+import com.example.data.scraper.SourceManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.io.File
@@ -40,6 +41,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
 
     var focusModeEnabled by mutableStateOf(false)
+    var ttsAutoScrollEnabled by mutableStateOf(true)
     var ttsTotalParagraphs by mutableStateOf(0)
 
     // Resumable session state
@@ -87,6 +89,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         activeAiProviderId = prefs.getString("active_ai_provider", "gemini_cloud") ?: "gemini_cloud"
         userGeminiApiKey = prefs.getString("gemini_api_key", "") ?: ""
         focusModeEnabled = prefs.getBoolean("focus_mode", false)
+        ttsAutoScrollEnabled = prefs.getBoolean("tts_auto_scroll", true)
         registerTtsReceiver()
         loadResumableTtsSession()
     }
@@ -149,6 +152,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var missingChaptersSummary by mutableStateOf("")
         private set
+
+    // --- Check for New Chapters State ---
+    var checkingNewChaptersBookId by mutableStateOf<String?>(null)
+    var isCheckingNewChapters by mutableStateOf(false)
+    var showNewChaptersDialog by mutableStateOf(false)
+    var newChaptersFoundCount by mutableStateOf(0)
+    var checkedBookEntity by mutableStateOf<BookEntity?>(null)
+    var newChaptersList by mutableStateOf<List<MissingChapter>>(emptyList())
+
+    // --- TTS Minimize State ---
+    var isTtsPlayerBarMinimized by mutableStateOf(false)
     var scrapingStatus by mutableStateOf("● Idle")
         private set
     var currentChapterNum by mutableStateOf(0)
@@ -279,7 +293,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         addLog("Starting search for missing chapters...")
         
         viewModelScope.launch(Dispatchers.IO) {
-            val bookId = TomatoScraper.parseBookId(url) ?: "novel_${System.currentTimeMillis()}"
+            val scraper = SourceManager.getSourceForUrl(url)
+            val bookId = scraper.parseBookId(url) ?: "novel_${System.currentTimeMillis()}"
             val bookUrl = if (url.contains("/book/")) {
                 val idx = url.indexOf("/book/")
                 val bookPart = url.substring(idx)
@@ -305,13 +320,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 var tries = 0
                 while (chapterUrls.isEmpty() && tries < 3) {
                     try {
-                        chapterUrls = TomatoScraper.scrapeChapterList(webView, bookUrl)
+                        chapterUrls = scraper.scrapeChapterList(webView, bookUrl)
                         if (chapterUrls.isEmpty()) {
                             withContext(Dispatchers.Main) {
                                 webView.loadUrl(bookUrl)
                             }
                             delay(5000)
-                            chapterUrls = TomatoScraper.scrapeChapterList(webView, bookUrl)
+                            chapterUrls = scraper.scrapeChapterList(webView, bookUrl)
                         }
                     } catch (e: CloudflareException) {
                         addLog("Cloudflare detected. Attempting to bypass...")
@@ -368,6 +383,100 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun checkForNewChapters(book: BookEntity) {
+        if (isCheckingNewChapters || isScraping) return
+        isCheckingNewChapters = true
+        checkingNewChaptersBookId = book.id
+        checkedBookEntity = book
+        newChaptersFoundCount = 0
+        newChaptersList = emptyList()
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val scraper = SourceManager.getSourceForUrl(book.url)
+                val bookUrl = if (book.url.contains("/book/")) {
+                    val idx = book.url.indexOf("/book/")
+                    val bookPart = book.url.substring(idx)
+                    val segments = bookPart.split("/").filter { it.isNotEmpty() }
+                    if (segments.size >= 2) {
+                        "https://tomatomtl.com/book/${segments[1]}"
+                    } else book.url
+                } else book.url
+
+                val webView = withContext(Dispatchers.Main) {
+                    WebView(getApplication<Application>().applicationContext).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                        settings.userAgentString = defaultUserAgent
+                    }
+                }
+
+                var chapterUrls = emptyList<String>()
+                var tries = 0
+                while (chapterUrls.isEmpty() && tries < 3) {
+                    try {
+                        chapterUrls = scraper.scrapeChapterList(webView, bookUrl)
+                        if (chapterUrls.isEmpty()) {
+                            withContext(Dispatchers.Main) {
+                                webView.loadUrl(bookUrl)
+                            }
+                            delay(5000)
+                            chapterUrls = scraper.scrapeChapterList(webView, bookUrl)
+                        }
+                    } catch (e: Exception) {
+                        tries++
+                        delay(2000)
+                    }
+                }
+
+                if (chapterUrls.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        isCheckingNewChapters = false
+                        checkingNewChaptersBookId = null
+                    }
+                    return@launch
+                }
+
+                val localChapters = repository.getChapters(book.id)
+                val localUrls = localChapters.map { it.url }.toSet()
+                val localNums = localChapters.map { it.chapterNumber }.toSet()
+
+                val missingList = mutableListOf<MissingChapter>()
+                for ((index, chapUrl) in chapterUrls.withIndex()) {
+                    val chapNum = index + 1
+                    if (!localUrls.contains(chapUrl) && !localNums.contains(chapNum)) {
+                        missingList.add(MissingChapter(chapUrl, chapNum))
+                    }
+                }
+
+                withContext(Dispatchers.Main) {
+                    newChaptersList = missingList
+                    newChaptersFoundCount = missingList.size
+                    showNewChaptersDialog = true
+                    isCheckingNewChapters = false
+                    checkingNewChaptersBookId = null
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    isCheckingNewChapters = false
+                    checkingNewChaptersBookId = null
+                }
+            }
+        }
+    }
+
+    fun startScrapingNewChapters() {
+        val book = checkedBookEntity ?: return
+        if (newChaptersList.isEmpty()) return
+        scrapeUrl = book.url
+        scrapeBookName = book.title
+        missingChaptersToScrape = newChaptersList
+        startScrapingMissing()
+        showNewChaptersDialog = false
+    }
+
     fun startScrapingMissing() {
         if (isScraping) return
         val url = scrapeUrl.trim()
@@ -418,7 +527,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             addLog("ERROR: Please enter a Novel or Chapter URL!")
             return
         }
-        val bookId = TomatoScraper.parseBookId(url)
+        val scraper = SourceManager.getSourceForUrl(url)
+        val bookId = scraper.parseBookId(url)
         if (bookId == null) {
             addLog("ERROR: Could not determine Novel ID from URL.")
             return
@@ -467,7 +577,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         bookName: String,
         specificChapters: List<MissingChapter>? = null
     ) {
-        val bookId = TomatoScraper.parseBookId(url) ?: "novel_${System.currentTimeMillis()}"
+        val scraper = SourceManager.getSourceForUrl(url)
+        val bookId = scraper.parseBookId(url) ?: "novel_${System.currentTimeMillis()}"
         val bookUrl = if (url.contains("/book/")) {
             val idx = url.indexOf("/book/")
             val bookPart = url.substring(idx)
@@ -501,7 +612,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             while (bookEntity == null && retryCount < 3) {
                 try {
-                    bookEntity = TomatoScraper.scrapeBookInfo(webView, bookUrl)
+                    bookEntity = scraper.scrapeBookInfo(webView, bookUrl)
                 } catch (e: CloudflareException) {
                     addLog("Cloudflare detected on Book page. Opening Captcha bypass...")
                     handleCaptchaChallenge(bookUrl)
@@ -535,7 +646,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             addLog("Extracting Table of Contents...")
             var chapterUrls = emptyList<String>()
             try {
-                chapterUrls = TomatoScraper.scrapeChapterList(webView, bookUrl)
+                chapterUrls = scraper.scrapeChapterList(webView, bookUrl)
             } catch (e: Exception) {
                 addLog("TOC parsing failed, using direct scraping if possible: ${e.message}")
             }
@@ -599,7 +710,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 scrapeProgress = currentChapterNum.toFloat() / totalChaptersToScrape
                 scrapingStatus = "● Downloading ($currentChapterNum/$totalChaptersToScrape)..."
 
-                val chapId = TomatoScraper.parseChapterId(chapterUrl) ?: "ch_$absoluteChapterNum"
+                val chapId = scraper.parseChapterId(chapterUrl) ?: "ch_$absoluteChapterNum"
                 val fullChapId = "${currentBookState.id}_$chapId"
 
                 // Check if already downloaded locally
@@ -617,7 +728,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         break
                     }
                     try {
-                        val rawContent = TomatoScraper.scrapeChapterContent(webView, chapterUrl) { shouldSkipCurrentChapter }
+                        val rawContent = scraper.scrapeChapterContent(webView, chapterUrl) { shouldSkipCurrentChapter }
                         val title = rawContent.first
                         var cleanedBody = TomatoScraper.sanitizeText(rawContent.second, aggressiveClean)
 
@@ -688,7 +799,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 repository.updateBook(currentBookState)
 
                 val context = getApplication<Application>().applicationContext
-                val outputFolder = File(context.filesDirs, currentBookState.id)
+                val outputFolder = File(context.filesDir, currentBookState.id)
                 if (!outputFolder.exists()) outputFolder.mkdirs()
 
                 if (selectedFormat == "EPUB" || selectedFormat == "Both") {
@@ -751,13 +862,207 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         captchaContinuation = null
     }
 
+    // --- Single Chapter and Novel Rescraping Logic ---
+    var rescrapingChapterId by mutableStateOf<String?>(null)
+    var isRescrapingBookId by mutableStateOf<String?>(null)
+    var rescrapeBookProgress by mutableStateOf(0f)
+
+    fun rescrapeSingleChapter(chapter: ChapterEntity, onComplete: (Boolean, String) -> Unit) {
+        if (rescrapingChapterId != null) {
+            onComplete(false, "Already rescraping another chapter.")
+            return
+        }
+        rescrapingChapterId = chapter.id
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val scraper = SourceManager.getSourceForUrl(chapter.url)
+                val webView = withContext(Dispatchers.Main) {
+                    WebView(getApplication<Application>().applicationContext).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                        settings.userAgentString = defaultUserAgent
+                    }
+                }
+                
+                try {
+                    val rawContent = scraper.scrapeChapterContent(webView, chapter.url) { false }
+                    val title = rawContent.first
+                    var cleanedBody = TomatoScraper.sanitizeText(rawContent.second, aggressiveClean)
+                    
+                    // Apply customized glossaries if any exist
+                    val glossaries = repository.getGlossary(chapter.bookId)
+                    if (glossaries.isNotEmpty()) {
+                        cleanedBody = repository.applyGlossary(cleanedBody, glossaries)
+                    }
+                    
+                    // Create MD5 Hash
+                    val md5 = java.security.MessageDigest.getInstance("MD5")
+                    val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                    
+                    val updatedChapter = chapter.copy(
+                        title = title,
+                        content = cleanedBody,
+                        hash = hash,
+                        downloadedAt = System.currentTimeMillis()
+                    )
+                    
+                    // Delete any cached polished/translated or recap data
+                    repository.deletePolishedChapter(chapter.id)
+                    repository.deleteChapterRecap(chapter.id)
+                    
+                    // Insert the fresh chapter content
+                    repository.insertChapter(updatedChapter)
+                    
+                    withContext(Dispatchers.Main) {
+                        rescrapingChapterId = null
+                        onComplete(true, "Successfully rescraped chapter: $title")
+                    }
+                } finally {
+                    withContext(Dispatchers.Main) {
+                        try {
+                            webView.destroy()
+                        } catch (e: Exception) {
+                            // ignore
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    rescrapingChapterId = null
+                    onComplete(false, "Error: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun rescrapeCorruptedChapters(bookId: String, onComplete: (Boolean, String) -> Unit) {
+        if (isRescrapingBookId != null) {
+            onComplete(false, "Already rescraping another novel.")
+            return
+        }
+        isRescrapingBookId = bookId
+        rescrapeBookProgress = 0f
+        
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val chapters = repository.getChapters(bookId)
+                val book = repository.getBook(bookId)
+                if (book == null) {
+                    withContext(Dispatchers.Main) {
+                        isRescrapingBookId = null
+                        onComplete(false, "Novel not found.")
+                    }
+                    return@launch
+                }
+                
+                val corrupted = chapters.filter { chapter ->
+                    val body = chapter.content
+                    val bodyLower = body.lowercase()
+                    body.length < 2500 && (
+                        bodyLower.contains("login to") || 
+                        bodyLower.contains("log in") || 
+                        bodyLower.contains("sign in to") || 
+                        bodyLower.contains("limit exceeded") || 
+                        bodyLower.contains("rate limit") || 
+                        bodyLower.contains("too many requests") || 
+                        bodyLower.contains("access denied") || 
+                        bodyLower.contains("unauthorized") || 
+                        bodyLower.contains("forbidden") || 
+                        bodyLower.contains("create an account") || 
+                        bodyLower.contains("membership") || 
+                        bodyLower.contains("please register") ||
+                        bodyLower.contains("sign in with") ||
+                        bodyLower.contains("google login") ||
+                        bodyLower.contains("facebook login")
+                    )
+                }
+                
+                if (corrupted.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        isRescrapingBookId = null
+                        onComplete(true, "No corrupted or invalid chapters detected in this novel.")
+                    }
+                    return@launch
+                }
+                
+                val scraper = SourceManager.getSourceForUrl(book.url)
+                val webView = withContext(Dispatchers.Main) {
+                    WebView(getApplication<Application>().applicationContext).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                        settings.userAgentString = defaultUserAgent
+                    }
+                }
+                
+                var successCount = 0
+                val glossaries = repository.getGlossary(bookId)
+                
+                try {
+                    corrupted.forEachIndexed { index, chapter ->
+                        try {
+                            val rawContent = scraper.scrapeChapterContent(webView, chapter.url) { false }
+                            val title = rawContent.first
+                            var cleanedBody = TomatoScraper.sanitizeText(rawContent.second, aggressiveClean)
+                            
+                            if (glossaries.isNotEmpty()) {
+                                cleanedBody = repository.applyGlossary(cleanedBody, glossaries)
+                            }
+                            
+                            val md5 = java.security.MessageDigest.getInstance("MD5")
+                            val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                            
+                            val updatedChapter = chapter.copy(
+                                title = title,
+                                content = cleanedBody,
+                                hash = hash,
+                                downloadedAt = System.currentTimeMillis()
+                            )
+                            
+                            repository.deletePolishedChapter(chapter.id)
+                            repository.deleteChapterRecap(chapter.id)
+                            repository.insertChapter(updatedChapter)
+                            successCount++
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                        
+                        withContext(Dispatchers.Main) {
+                            rescrapeBookProgress = (index + 1).toFloat() / corrupted.size
+                        }
+                        delay(1500)
+                    }
+                } finally {
+                    withContext(Dispatchers.Main) {
+                        try {
+                            webView.destroy()
+                        } catch (e: Exception) {
+                            // ignore
+                        }
+                    }
+                }
+                
+                withContext(Dispatchers.Main) {
+                    isRescrapingBookId = null
+                    onComplete(true, "Completed! Successfully rescraped $successCount out of ${corrupted.size} corrupted chapters.")
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    isRescrapingBookId = null
+                    onComplete(false, "Error: ${e.message}")
+                }
+            }
+        }
+    }
+
     // --- Book Deletion and Export Helpers ---
     fun deleteBook(bookId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 // Delete local folders if any exist
                 val context = getApplication<Application>().applicationContext
-                val folder = File(context.filesDirs, bookId)
+                val folder = File(context.filesDir, bookId)
                 if (folder.exists()) {
                     folder.deleteRecursively()
                 }
@@ -773,7 +1078,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>().applicationContext
             val chapters = repository.getChapters(book.id)
-            val outputFolder = File(context.filesDirs, book.id)
+            val outputFolder = File(context.filesDir, book.id)
             if (!outputFolder.exists()) outputFolder.mkdirs()
 
             if (format == "EPUB") {
@@ -1110,6 +1415,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun playVoicePreview(voiceOption: VoiceOption) {
+        val sampleText = "Hello! This is a sample of the ${voiceOption.name.replace("Piper - ", "").replace("System: ", "")} voice."
+        val isPiper = voiceOption.id.startsWith("vits-piper-")
+        val piperVoice = if (isPiper) com.example.data.ai.PiperVoiceCatalog.getVoiceById(voiceOption.id) else null
+        val isDownloaded = piperVoice != null && isVoiceDownloaded(piperVoice)
+
+        if (isPiper && isDownloaded) {
+            viewModelScope.launch(Dispatchers.Main) {
+                tts?.stop()
+                sherpaOnnxTtsEngine.selectedVoiceId = voiceOption.id
+                sherpaOnnxTtsEngine.selectedSpeakerId = getSpeakerId(voiceOption.id)
+                sherpaOnnxTtsEngine.initOnnx()
+                sherpaOnnxTtsEngine.speak(
+                    text = sampleText,
+                    speed = ttsSpeed,
+                    pitch = ttsPitch,
+                    onStart = { },
+                    onDone = { }
+                )
+            }
+        } else if (!isPiper) {
+            initTts {
+                viewModelScope.launch(Dispatchers.Main) {
+                    tts?.stop()
+                    val rawVoices = tts?.voices
+                    val actualVoice = rawVoices?.find { it.name == voiceOption.id }
+                    if (actualVoice != null) {
+                        tts?.setVoice(actualVoice)
+                    } else {
+                        tts?.setLanguage(voiceOption.locale)
+                    }
+                    tts?.setPitch(ttsPitch)
+                    tts?.setSpeechRate(ttsSpeed)
+                    tts?.speak(sampleText, TextToSpeech.QUEUE_FLUSH, null, "preview_${voiceOption.id}")
+                }
+            }
+        }
+    }
+
     fun setTtsVoice(voiceOption: VoiceOption) {
         selectedVoiceId = voiceOption.id
         prefs.edit().putString("tts_selected_voice", voiceOption.id).apply()
@@ -1268,11 +1612,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putBoolean("focus_mode", focusModeEnabled).apply()
     }
 
+    fun toggleTtsAutoScroll() {
+        ttsAutoScrollEnabled = !ttsAutoScrollEnabled
+        prefs.edit().putBoolean("tts_auto_scroll", ttsAutoScrollEnabled).apply()
+    }
+
     fun speak(text: String, book: BookEntity, chapter: ChapterEntity, startFromParagraphIndex: Int = -1) {
-        // Save chapter progress
+        // Save chapter progress & mark chapter as read
         viewModelScope.launch(Dispatchers.IO) {
             val updatedBook = book.copy(lastReadChapterId = chapter.id)
             repository.updateBook(updatedBook)
+            repository.updateChapterReadStatus(chapter.id, true)
         }
 
         val isPiper = selectedVoiceId.startsWith("vits-piper-")
@@ -1489,7 +1839,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun downloadCoverAndSaveMetadata(book: BookEntity, cookies: String): BookEntity {
         val context = getApplication<Application>().applicationContext
-        val outputFolder = File(context.filesDirs, book.id)
+        val outputFolder = File(context.filesDir, book.id)
         if (!outputFolder.exists()) outputFolder.mkdirs()
 
         // 1. Download Cover Image
@@ -1971,10 +2321,6 @@ data class DiscoveryItem(
     val description: String,
     val searchUrl: String
 )
-
-// Simple extension helper
-val Context.filesDirs: File
-    get() = this.filesDir
 
 data class MissingChapter(
     val url: String,

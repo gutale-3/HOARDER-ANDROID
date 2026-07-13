@@ -6,7 +6,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -94,6 +98,81 @@ fun TtsPlayerBar(
 
     var showSettingsDialog by remember { mutableStateOf(false) }
 
+    if (viewModel.isTtsPlayerBarMinimized) {
+        Card(
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .testTag("tts_player_bar_minimized"),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp)
+            ),
+            shape = RoundedCornerShape(24.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                IconButton(
+                    onClick = { viewModel.isTtsPlayerBarMinimized = false },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.UnfoldMore,
+                        contentDescription = "Expand Player",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                Text(
+                    text = "${playingBook.title} - ${playingChapter.title}",
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+
+                IconButton(
+                    onClick = {
+                        if (viewModel.ttsIsPlaying) {
+                            viewModel.pauseTts()
+                        } else {
+                            viewModel.resumeTts()
+                        }
+                    },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = if (viewModel.ttsIsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = "Play/Pause",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = { viewModel.stopTts() },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+        }
+        return
+    }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -169,6 +248,18 @@ fun TtsPlayerBar(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
+                    IconButton(
+                        onClick = { viewModel.toggleTtsAutoScroll() },
+                        modifier = Modifier.testTag("tts_quick_autoscroll_btn")
+                    ) {
+                        Icon(
+                            imageVector = if (viewModel.ttsAutoScrollEnabled) Icons.Default.MenuBook else Icons.Default.Book,
+                            contentDescription = "Toggle Auto-Scroll",
+                            tint = if (viewModel.ttsAutoScrollEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
                     IconButton(onClick = {
                         viewModel.initTts()
                         showSettingsDialog = true
@@ -176,6 +267,15 @@ fun TtsPlayerBar(
                         Icon(
                             imageVector = Icons.Default.Settings,
                             contentDescription = "Voice Settings",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    IconButton(onClick = { viewModel.isTtsPlayerBarMinimized = true }) {
+                        Icon(
+                            imageVector = Icons.Default.UnfoldLess,
+                            contentDescription = "Minimize Player",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(20.dp)
                         )
@@ -321,392 +421,613 @@ fun TtsPlayerBar(
                 }
             }
         }
-    }
-
-    // --- Voice Customization Dialog ---
+    }    // --- Voice Customization Dialog ---
     if (showSettingsDialog) {
-        AlertDialog(
+        Dialog(
             onDismissRequest = { showSettingsDialog = false },
-            title = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.RecordVoiceOver,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Text("Voice Reader Options", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
-                }
-            },
-            text = {
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.95f)
+                    .fillMaxHeight(0.9f),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp
+            ) {
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 420.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                        .fillMaxSize()
+                        .padding(16.dp)
                 ) {
-                    // 0. Sleep Timer Option
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            text = "Sleep Timer: " + if (viewModel.sleepTimerMinutes == 0) "Never" else {
-                                val mins = (viewModel.sleepTimerRemainingSeconds ?: 0) / 60
-                                val secs = (viewModel.sleepTimerRemainingSeconds ?: 0) % 60
-                                "${viewModel.sleepTimerMinutes}m (${String.format("%02d:%02d", mins, secs)} remaining)"
-                            },
-                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                    // Header
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            val timerOptions = listOf(0 to "Never", 10 to "10m", 30 to "30m", 60 to "1h", 120 to "2h")
-                            timerOptions.forEach { (mins, label) ->
-                                val isSelected = viewModel.sleepTimerMinutes == mins
-                                OutlinedButton(
-                                    onClick = { viewModel.startSleepTimer(mins) },
-                                    modifier = Modifier.weight(1f),
-                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
-                                    border = BorderStroke(
-                                        width = 1.dp,
-                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                                    ),
-                                    colors = ButtonDefaults.outlinedButtonColors(
-                                        containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                                        contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                                    ),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
+                            Icon(
+                                imageVector = Icons.Default.RecordVoiceOver,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(28.dp)
+                            )
+                            Text(
+                                "Voice Reader Options",
+                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black)
+                            )
+                        }
+                        IconButton(onClick = { showSettingsDialog = false }) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
                         }
                     }
 
-                    Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                    // 1. Speech Speed Slider
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
-                            text = "Reading Speed: ${String.format("%.1f", viewModel.ttsSpeed)}x",
-                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                    // Tab Selector
+                    var selectedTab by remember { mutableStateOf(0) } // 0 = Tuning / Controls, 1 = Voices
+                    TabRow(
+                        selectedTabIndex = selectedTab,
+                        containerColor = Color.Transparent,
+                        divider = { Divider(color = MaterialTheme.colorScheme.surfaceVariant) }
+                    ) {
+                        Tab(
+                            selected = selectedTab == 0,
+                            onClick = { selectedTab = 0 },
+                            text = { Text("Voice Tuning", fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+                            icon = { Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(18.dp)) }
                         )
-                        Slider(
-                            value = viewModel.ttsSpeed,
-                            onValueChange = { speed ->
-                                viewModel.updateTtsSettings(viewModel.ttsPitch, speed)
-                            },
-                            valueRange = 0.5f..2.5f,
-                            steps = 19
-                        )
-                    }
-
-                    // 2. Pitch Control
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
-                            text = "Pitch / Tone: ${String.format("%.1f", viewModel.ttsPitch)}",
-                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
-                        )
-                        Slider(
-                            value = viewModel.ttsPitch,
-                            onValueChange = { pitch ->
-                                viewModel.updateTtsSettings(pitch, viewModel.ttsSpeed)
-                            },
-                            valueRange = 0.5f..1.5f,
-                            steps = 9
+                        Tab(
+                            selected = selectedTab == 1,
+                            onClick = { selectedTab = 1 },
+                            text = { Text("Select Voice", fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+                            icon = { Icon(Icons.Default.Language, contentDescription = null, modifier = Modifier.size(18.dp)) }
                         )
                     }
 
-                    Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Spacer(modifier = Modifier.height(16.dp))
 
-                    // 3. Voice choices
-                    Text(
-                        text = "Voice Choice (${viewModel.ttsVoices.size} options)",
-                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-
-                    if (viewModel.ttsVoices.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(100.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("Initializing voices list...", style = MaterialTheme.typography.bodyMedium)
-                        }
-                    } else {
-                        LazyColumn(
+                    if (selectedTab == 0) {
+                        // --- TUNING TAB ---
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                            contentPadding = PaddingValues(6.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(20.dp)
                         ) {
-                            items(viewModel.ttsVoices) { voice ->
-                                val isSelected = voice.id == viewModel.selectedVoiceId
-                                if (voice.id.startsWith("vits-piper-")) {
-                                    val piperVoice = com.example.data.ai.PiperVoiceCatalog.getVoiceById(voice.id)
-                                    val isDownloaded = viewModel.isVoiceDownloaded(piperVoice)
-                                    val isThisVoiceDownloading = viewModel.premiumVoiceDownloading && viewModel.sherpaOnnxTtsEngine.selectedVoiceId == voice.id
-                                    Card(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 4.dp)
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .clickable {
-                                                if (isDownloaded) {
-                                                    viewModel.setTtsVoice(voice)
-                                                }
-                                            },
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = if (isSelected) {
-                                                MaterialTheme.colorScheme.primaryContainer
-                                            } else {
-                                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                                            }
-                                        ),
-                                        border = BorderStroke(
-                                            width = 1.5.dp,
-                                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
-                                        )
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.padding(12.dp),
-                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                            // 1. Sleep Timer
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "Sleep Timer",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = if (viewModel.sleepTimerMinutes == 0) "Inactive" else {
+                                        val mins = (viewModel.sleepTimerRemainingSeconds ?: 0) / 60
+                                        val secs = (viewModel.sleepTimerRemainingSeconds ?: 0) % 60
+                                        "Active: ${viewModel.sleepTimerMinutes}m (${String.format("%02d:%02d", mins, secs)} remaining)"
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    val timerOptions = listOf(0 to "Never", 10 to "10m", 30 to "30m", 60 to "1h", 120 to "2h")
+                                    timerOptions.forEach { (mins, label) ->
+                                        val isSelected = viewModel.sleepTimerMinutes == mins
+                                        OutlinedButton(
+                                            onClick = { viewModel.startSleepTimer(mins) },
+                                            modifier = Modifier.weight(1f),
+                                            contentPadding = PaddingValues(vertical = 12.dp),
+                                            border = BorderStroke(
+                                                width = 1.5.dp,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                            ),
+                                            colors = ButtonDefaults.outlinedButtonColors(
+                                                containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                                                contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                            ),
+                                            shape = RoundedCornerShape(12.dp)
                                         ) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Column(modifier = Modifier.weight(1f)) {
-                                                    Row(
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                    ) {
-                                                        Text(
-                                                            text = "Piper - ${piperVoice.name}",
-                                                            style = MaterialTheme.typography.bodyMedium.copy(
-                                                                fontWeight = FontWeight.Bold,
-                                                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
-                                                                else MaterialTheme.colorScheme.onSurface
-                                                            )
-                                                        )
-                                                        Icon(
-                                                            imageVector = Icons.Default.Star,
-                                                            contentDescription = "Premium Voice",
-                                                            tint = MaterialTheme.colorScheme.primary,
-                                                            modifier = Modifier.size(16.dp)
-                                                        )
+                                            Text(label, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Divider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                            // 2. Reading Speed
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Reading Speed",
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    Text(
+                                        text = "${String.format("%.1f", viewModel.ttsSpeed)}x",
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontWeight = FontWeight.Black,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    )
+                                }
+                                Slider(
+                                    value = viewModel.ttsSpeed,
+                                    onValueChange = { speed ->
+                                        viewModel.updateTtsSettings(viewModel.ttsPitch, speed)
+                                    },
+                                    valueRange = 0.5f..2.5f,
+                                    steps = 19
+                                )
+                                // Quick presets
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    listOf(0.8f, 1.0f, 1.2f, 1.5f, 2.0f).forEach { speedVal ->
+                                        val isSelected = Math.abs(viewModel.ttsSpeed - speedVal) < 0.05f
+                                        val label = if (speedVal == 1.0f) "Normal (1.0x)" else "${speedVal}x"
+                                        SuggestionChip(
+                                            onClick = { viewModel.updateTtsSettings(viewModel.ttsPitch, speedVal) },
+                                            label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                                            colors = SuggestionChipDefaults.suggestionChipColors(
+                                                containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                                                labelColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                            ),
+                                            border = BorderStroke(
+                                                width = if (isSelected) 1.5.dp else 1.dp,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                                            ),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Divider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                            // 3. Pitch Controls
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Pitch / Tone",
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    Text(
+                                        text = "${String.format("%.1f", viewModel.ttsPitch)}",
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontWeight = FontWeight.Black,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    )
+                                }
+                                Slider(
+                                    value = viewModel.ttsPitch,
+                                    onValueChange = { pitch ->
+                                        viewModel.updateTtsSettings(pitch, viewModel.ttsSpeed)
+                                    },
+                                    valueRange = 0.5f..1.5f,
+                                    steps = 9
+                                )
+                                // Quick presets
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    listOf(
+                                        Triple(0.7f, "Deep", "Deep Tone"),
+                                        Triple(1.0f, "Normal", "Normal Pitch"),
+                                        Triple(1.3f, "High", "High Pitch")
+                                    ).forEach { (pitchVal, label, desc) ->
+                                        val isSelected = Math.abs(viewModel.ttsPitch - pitchVal) < 0.05f
+                                        SuggestionChip(
+                                            onClick = { viewModel.updateTtsSettings(pitchVal, viewModel.ttsSpeed) },
+                                            label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                                            colors = SuggestionChipDefaults.suggestionChipColors(
+                                                containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                                                labelColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                            ),
+                                            border = BorderStroke(
+                                                width = if (isSelected) 1.5.dp else 1.dp,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                                            ),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Divider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                            // 4. Auto-Scroll Toggle
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                                    .padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Auto-Follow Spoken Text",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    Text(
+                                        text = "Keep reader in sync automatically",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = viewModel.ttsAutoScrollEnabled,
+                                    onCheckedChange = { viewModel.toggleTtsAutoScroll() }
+                                )
+                            }
+                        }
+                    } else {
+                        // --- VOICES TAB ---
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                text = "Select Reader Voice (${viewModel.ttsVoices.size} options)",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+
+                            if (viewModel.ttsVoices.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        CircularProgressIndicator()
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("Initializing voices list...", style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    contentPadding = PaddingValues(8.dp)
+                                ) {
+                                    items(viewModel.ttsVoices) { voice ->
+                                        val isSelected = voice.id == viewModel.selectedVoiceId
+                                        if (voice.id.startsWith("vits-piper-")) {
+                                            val piperVoice = com.example.data.ai.PiperVoiceCatalog.getVoiceById(voice.id)
+                                            val isDownloaded = viewModel.isVoiceDownloaded(piperVoice)
+                                            val isThisVoiceDownloading = viewModel.premiumVoiceDownloading && viewModel.sherpaOnnxTtsEngine.selectedVoiceId == voice.id
+                                            
+                                            Card(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .clickable {
+                                                        if (isDownloaded) {
+                                                            viewModel.setTtsVoice(voice)
+                                                        } else if (!isThisVoiceDownloading) {
+                                                            viewModel.downloadPremiumVoice(piperVoice)
+                                                        }
+                                                    },
+                                                colors = CardDefaults.cardColors(
+                                                    containerColor = if (isSelected) {
+                                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                                                    } else {
+                                                        MaterialTheme.colorScheme.surface
                                                     }
-                                                    Text(
-                                                        text = if (isDownloaded) {
-                                                            "${piperVoice.gender} • ${piperVoice.accent} • 100% Offline"
-                                                        } else {
-                                                            "${piperVoice.gender} • ${piperVoice.accent} • ~${piperVoice.sizeMb}MB"
-                                                        },
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                                                        else MaterialTheme.colorScheme.onSurfaceVariant
-                                                    )
-                                                }
-                                                
-                                                if (isSelected && isDownloaded) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.CheckCircle,
-                                                        contentDescription = "Selected",
-                                                        tint = MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier.size(20.dp)
-                                                    )
+                                                ),
+                                                border = BorderStroke(
+                                                    width = if (isSelected) 2.dp else 1.dp,
+                                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                                )
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier.padding(10.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        // Avatar Badge
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(40.dp)
+                                                                .background(
+                                                                    if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                                                                    else MaterialTheme.colorScheme.surfaceVariant,
+                                                                    shape = RoundedCornerShape(10.dp)
+                                                                ),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = if (isSelected) Icons.Default.VolumeUp else Icons.Default.RecordVoiceOver,
+                                                                contentDescription = null,
+                                                                tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                modifier = Modifier.size(20.dp)
+                                                            )
+                                                        }
+
+                                                        // Voice Title Info
+                                                        Column(modifier = Modifier.weight(1f)) {
+                                                            Row(
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                            ) {
+                                                                Text(
+                                                                    text = "Piper: ${piperVoice.name}",
+                                                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                                                        fontWeight = FontWeight.Bold,
+                                                                        color = if (isSelected) MaterialTheme.colorScheme.primary
+                                                                        else MaterialTheme.colorScheme.onSurface
+                                                                    )
+                                                                )
+                                                                if (isDownloaded) {
+                                                                    Box(
+                                                                        modifier = Modifier
+                                                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                                                                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                                                                    ) {
+                                                                        Text(
+                                                                            text = "Offline",
+                                                                            style = MaterialTheme.typography.labelSmall,
+                                                                            color = MaterialTheme.colorScheme.primary,
+                                                                            fontSize = 8.sp,
+                                                                            fontWeight = FontWeight.Bold
+                                                                        )
+                                                                    }
+                                                                } else {
+                                                                    Box(
+                                                                        modifier = Modifier
+                                                                            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
+                                                                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                                                                    ) {
+                                                                        Text(
+                                                                            text = "${piperVoice.sizeMb}MB",
+                                                                            style = MaterialTheme.typography.labelSmall,
+                                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                            fontSize = 8.sp
+                                                                        )
+                                                                    }
+                                                                }
+                                                            }
+                                                            Text(
+                                                                text = "${piperVoice.accent} • ${piperVoice.gender}",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+                                                        }
+
+                                                        // Play Sample & Delete Controls
+                                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                            IconButton(
+                                                                onClick = { viewModel.playVoicePreview(voice) },
+                                                                modifier = Modifier.size(36.dp)
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.PlayCircle,
+                                                                    contentDescription = "Preview Sample",
+                                                                    tint = MaterialTheme.colorScheme.primary,
+                                                                    modifier = Modifier.size(24.dp)
+                                                                )
+                                                            }
+
+                                                            if (isDownloaded) {
+                                                                IconButton(
+                                                                    onClick = { viewModel.deletePremiumVoice(piperVoice) },
+                                                                    modifier = Modifier.size(36.dp)
+                                                                ) {
+                                                                    Icon(
+                                                                        imageVector = Icons.Default.Delete,
+                                                                        contentDescription = "Delete",
+                                                                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                                                                        modifier = Modifier.size(16.dp)
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // Speaker ID input if multi-speaker
+                                                    if (isSelected && voice.id == "vits-piper-en_US-libritts_r-medium") {
+                                                        var speakerIdInput by remember { mutableStateOf(viewModel.getSpeakerId(voice.id).toString()) }
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+                                                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.SpaceBetween
+                                                        ) {
+                                                            Text(
+                                                                text = "Speaker ID (0-900+):",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = MaterialTheme.colorScheme.onSurface
+                                                            )
+                                                            TextField(
+                                                                value = speakerIdInput,
+                                                                onValueChange = { newVal ->
+                                                                    if (newVal.all { it.isDigit() }) {
+                                                                        speakerIdInput = newVal
+                                                                        val sId = newVal.toIntOrNull() ?: 0
+                                                                        viewModel.saveSpeakerId(voice.id, sId)
+                                                                    }
+                                                                },
+                                                                modifier = Modifier.width(70.dp).height(32.dp),
+                                                                textStyle = MaterialTheme.typography.labelSmall,
+                                                                singleLine = true,
+                                                                colors = TextFieldDefaults.colors(
+                                                                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                                                    unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                                                                    focusedIndicatorColor = Color.Transparent,
+                                                                    unfocusedIndicatorColor = Color.Transparent
+                                                                )
+                                                            )
+                                                        }
+                                                    }
+
+                                                    // Download progress bar
+                                                    if (isThisVoiceDownloading) {
+                                                        Column(
+                                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                                                        ) {
+                                                            Row(
+                                                                modifier = Modifier.fillMaxWidth(),
+                                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                                verticalAlignment = Alignment.CenterVertically
+                                                            ) {
+                                                                Text(
+                                                                    text = "Downloading voice... ${viewModel.premiumVoiceDownloadProgress}%",
+                                                                    style = MaterialTheme.typography.labelSmall,
+                                                                    color = MaterialTheme.colorScheme.primary,
+                                                                    fontWeight = FontWeight.Bold
+                                                                )
+                                                                CircularProgressIndicator(
+                                                                    modifier = Modifier.size(10.dp),
+                                                                    strokeWidth = 1.5.dp,
+                                                                    color = MaterialTheme.colorScheme.primary
+                                                                )
+                                                            }
+                                                            LinearProgressIndicator(
+                                                                progress = viewModel.premiumVoiceDownloadProgress / 100f,
+                                                                modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                                                color = MaterialTheme.colorScheme.primary,
+                                                                trackColor = MaterialTheme.colorScheme.surfaceVariant
+                                                            )
+                                                        }
+                                                    }
                                                 }
                                             }
-
-                                            Text(
-                                                text = piperVoice.description,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                                                else MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-
-                                            if (isSelected && voice.id == "vits-piper-en_US-libritts_r-medium") {
-                                                var speakerIdInput by remember { mutableStateOf(viewModel.getSpeakerId(voice.id).toString()) }
+                                        } else {
+                                            Card(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .clickable {
+                                                        viewModel.setTtsVoice(voice)
+                                                    },
+                                                colors = CardDefaults.cardColors(
+                                                    containerColor = if (isSelected) {
+                                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                                                    } else {
+                                                        MaterialTheme.colorScheme.surface
+                                                    }
+                                                ),
+                                                border = BorderStroke(
+                                                    width = if (isSelected) 2.dp else 1.dp,
+                                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                                )
+                                            ) {
                                                 Row(
-                                                    modifier = Modifier.fillMaxWidth(),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(10.dp),
                                                     verticalAlignment = Alignment.CenterVertically,
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                 ) {
-                                                    Text(
-                                                        text = "Speaker ID (0-900+):",
-                                                        style = MaterialTheme.typography.labelMedium,
-                                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                                                    )
-                                                    TextField(
-                                                        value = speakerIdInput,
-                                                        onValueChange = { newVal ->
-                                                            if (newVal.all { it.isDigit() }) {
-                                                                speakerIdInput = newVal
-                                                                val sId = newVal.toIntOrNull() ?: 0
-                                                                viewModel.saveSpeakerId(voice.id, sId)
-                                                            }
-                                                        },
-                                                        modifier = Modifier.width(80.dp),
-                                                        textStyle = MaterialTheme.typography.bodySmall,
-                                                        singleLine = true,
-                                                        colors = TextFieldDefaults.colors(
-                                                            focusedContainerColor = MaterialTheme.colorScheme.surface,
-                                                            unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)
-                                                        )
-                                                    )
-                                                }
-                                            }
-
-                                            if (isThisVoiceDownloading) {
-                                                Column(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                                                ) {
-                                                    Row(
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        Text(
-                                                            text = "Downloading: ${viewModel.premiumVoiceDownloadProgress}%",
-                                                            style = MaterialTheme.typography.labelMedium,
-                                                            color = MaterialTheme.colorScheme.primary,
-                                                            fontWeight = FontWeight.SemiBold
-                                                        )
-                                                        CircularProgressIndicator(
-                                                            modifier = Modifier.size(14.dp),
-                                                            strokeWidth = 2.dp,
-                                                            color = MaterialTheme.colorScheme.primary
-                                                        )
-                                                    }
-                                                    LinearProgressIndicator(
-                                                        progress = viewModel.premiumVoiceDownloadProgress / 100f,
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        color = MaterialTheme.colorScheme.primary,
-                                                        trackColor = MaterialTheme.colorScheme.surfaceVariant
-                                                    )
-                                                }
-                                            } else if (!isDownloaded) {
-                                                Button(
-                                                    onClick = { viewModel.downloadPremiumVoice(piperVoice) },
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    colors = ButtonDefaults.buttonColors(
-                                                        containerColor = MaterialTheme.colorScheme.primary
-                                                    ),
-                                                    contentPadding = PaddingValues(vertical = 4.dp),
-                                                    enabled = !viewModel.premiumVoiceDownloading
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Download,
-                                                        contentDescription = "Download Piper Voice",
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                    Text(
-                                                        text = if (viewModel.premiumVoiceDownloading) "Another download in progress" else "Download Voice",
-                                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
-                                                    )
-                                                }
-                                            } else {
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    if (!isSelected) {
-                                                        TextButton(
-                                                            onClick = { viewModel.setTtsVoice(voice) },
-                                                            contentPadding = PaddingValues(0.dp)
-                                                        ) {
-                                                            Text(
-                                                                text = "Tap to activate",
-                                                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
-                                                            )
-                                                        }
-                                                    } else {
-                                                        Text(
-                                                            text = "Active Offline Voice",
-                                                            style = MaterialTheme.typography.labelMedium.copy(
-                                                                fontWeight = FontWeight.Bold,
-                                                                color = MaterialTheme.colorScheme.primary
-                                                            )
-                                                        )
-                                                    }
-
-                                                    IconButton(
-                                                        onClick = { viewModel.deletePremiumVoice(piperVoice) },
-                                                        modifier = Modifier.size(32.dp)
+                                                    // Avatar Badge
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(40.dp)
+                                                            .background(
+                                                                if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                                                                else MaterialTheme.colorScheme.surfaceVariant,
+                                                                shape = RoundedCornerShape(10.dp)
+                                                            ),
+                                                        contentAlignment = Alignment.Center
                                                     ) {
                                                         Icon(
-                                                            imageVector = Icons.Default.Delete,
-                                                            contentDescription = "Delete Piper Voice",
-                                                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
-                                                            modifier = Modifier.size(16.dp)
+                                                            imageVector = if (isSelected) Icons.Default.VolumeUp else Icons.Default.Hearing,
+                                                            contentDescription = null,
+                                                            tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
+
+                                                    // Voice Details
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = voice.name.replace("System: ", "").substringAfterLast(" - ").uppercase(),
+                                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                            ),
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        Text(
+                                                            text = "System Default Voice",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+
+                                                    // Play Sample button
+                                                    IconButton(
+                                                        onClick = { viewModel.playVoicePreview(voice) },
+                                                        modifier = Modifier.size(36.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.PlayCircle,
+                                                            contentDescription = "Preview Sample",
+                                                            tint = MaterialTheme.colorScheme.primary,
+                                                            modifier = Modifier.size(24.dp)
                                                         )
                                                     }
                                                 }
                                             }
-                                        }
-                                    }
-                                } else {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(
-                                                if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                                                else Color.Transparent
-                                            )
-                                            .clickable {
-                                                viewModel.setTtsVoice(voice)
-                                            }
-                                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            text = voice.name,
-                                            style = MaterialTheme.typography.bodyMedium.copy(
-                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
-                                                else MaterialTheme.colorScheme.onSurface
-                                            ),
-                                            modifier = Modifier.weight(1f),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        if (isSelected) {
-                                            Icon(
-                                                imageVector = Icons.Default.CheckCircle,
-                                                contentDescription = "Selected",
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(18.dp)
-                                            )
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = { showSettingsDialog = false },
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text("Close", fontWeight = FontWeight.Bold)
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Bottom Dismiss Button
+                    Button(
+                        onClick = { showSettingsDialog = false },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(vertical = 12.dp)
+                    ) {
+                        Text("Done", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
                 }
             }
-        )
+        }
     }
 }

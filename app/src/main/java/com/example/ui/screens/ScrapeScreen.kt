@@ -737,6 +737,10 @@ fun ScrapeScreen(
                                     settings.javaScriptEnabled = true
                                     settings.domStorageEnabled = true
                                     settings.databaseEnabled = true
+                                    settings.useWideViewPort = true
+                                    settings.loadWithOverviewMode = true
+                                    settings.builtInZoomControls = true
+                                    settings.displayZoomControls = false
                                     settings.userAgentString = viewModel.defaultUserAgent
                                     webViewClient = object : WebViewClient() {
                                         override fun onPageFinished(view: WebView?, url: String?) {
@@ -923,6 +927,10 @@ fun ScrapeScreen(
                                 settings.javaScriptEnabled = true
                                 settings.domStorageEnabled = true
                                 settings.databaseEnabled = true
+                                settings.useWideViewPort = true
+                                settings.loadWithOverviewMode = true
+                                settings.builtInZoomControls = true
+                                settings.displayZoomControls = false
                                 settings.userAgentString = viewModel.defaultUserAgent
                                 webViewClient = object : WebViewClient() {
                                     override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {

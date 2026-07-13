@@ -59,10 +59,14 @@ class NovelRepository(private val bookDao: BookDao) {
 
     suspend fun insertPolishedChapter(polished: PolishedChapterEntity) = bookDao.insertPolishedChapter(polished)
 
+    suspend fun deletePolishedChapter(chapterId: String) = bookDao.deletePolishedChapter(chapterId)
+
     // --- Chapter Recaps ---
     suspend fun getChapterRecap(chapterId: String): ChapterRecapEntity? = bookDao.getChapterRecap(chapterId)
 
     suspend fun insertChapterRecap(recap: ChapterRecapEntity) = bookDao.insertChapterRecap(recap)
+
+    suspend fun deleteChapterRecap(chapterId: String) = bookDao.deleteChapterRecap(chapterId)
 
     // --- Bulk Updates / Find-and-Replace ---
     suspend fun updateChapterContent(id: String, content: String) = bookDao.updateChapterContent(id, content)

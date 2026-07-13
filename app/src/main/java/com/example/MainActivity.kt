@@ -31,7 +31,7 @@ import com.example.ui.screens.TtsPlayerBar
 import com.example.ui.screens.DiscoverScreen
 import com.example.ui.screens.AiSettingsDialog
 import com.example.ui.theme.AppTheme
-import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.theme.NovelHoarderTheme
 import com.example.viewmodel.MainViewModel
 
 class MainActivity : ComponentActivity() {
@@ -50,7 +50,7 @@ class MainActivity : ComponentActivity() {
       val viewModel: MainViewModel = viewModel()
       val navController = rememberNavController()
 
-      MyApplicationTheme(appTheme = viewModel.currentTheme) {
+      NovelHoarderTheme(appTheme = viewModel.currentTheme) {
         val navBackStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry?.destination?.route ?: "home"
 
@@ -228,7 +228,8 @@ class MainActivity : ComponentActivity() {
               composable("library") {
                 LibraryScreen(
                   viewModel = viewModel,
-                  onOpenBook = { bookId -> navController.navigate("reader/$bookId") }
+                  onOpenBook = { bookId -> navController.navigate("reader/$bookId") },
+                  onNavigateToScrape = { navController.navigate("scrape") }
                 )
               }
 

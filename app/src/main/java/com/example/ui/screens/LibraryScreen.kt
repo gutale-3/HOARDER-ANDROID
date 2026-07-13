@@ -40,6 +40,7 @@ import androidx.compose.ui.layout.ContentScale
 fun LibraryScreen(
     viewModel: MainViewModel,
     onOpenBook: (String) -> Unit,
+    onNavigateToScrape: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val books by viewModel.repository.allBooks.collectAsState(emptyList())
@@ -56,6 +57,10 @@ fun LibraryScreen(
     // Export progress feedback
     var exportStatusMessage by remember { mutableStateOf("") }
     var showExportResultDialog by remember { mutableStateOf(false) }
+
+    // Rescrape feedback
+    var rescrapeResultMessage by remember { mutableStateOf("") }
+    var showRescrapeResultDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier
@@ -137,7 +142,15 @@ fun LibraryScreen(
                     onDelete = {
                         activeDeleteBook = book
                         showDeleteConfirmDialog = true
-                    }
+                    },
+                    onRescrapeCorrupted = {
+                        viewModel.rescrapeCorruptedChapters(book.id) { success, message ->
+                            rescrapeResultMessage = message
+                            showRescrapeResultDialog = true
+                        }
+                    },
+                    onCheckNewChapters = { viewModel.checkForNewChapters(book) },
+                    isCheckingNewChapters = viewModel.isCheckingNewChapters && viewModel.checkingNewChaptersBookId == book.id
                 )
             }
         }
@@ -182,12 +195,95 @@ fun LibraryScreen(
         )
     }
 
+    // --- Rescrape Progress Dialog ---
+    if (viewModel.isRescrapingBookId != null) {
+        val progressPercent = (viewModel.rescrapeBookProgress * 100).toInt()
+        AlertDialog(
+            onDismissRequest = { /* non-dismissable */ },
+            title = { Text("Rescraping Novel...") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("Re-scraping corrupted/invalid chapters for this novel. This identifies chapters capturing login pages or error messages and restores them. Please hold on...")
+                    Spacer(modifier = Modifier.height(4.dp))
+                    LinearProgressIndicator(
+                        progress = viewModel.rescrapeBookProgress,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = "Progress: $progressPercent%",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            },
+            confirmButton = {}
+        )
+    }
+
+    // --- Rescrape Result Dialog ---
+    if (showRescrapeResultDialog) {
+        AlertDialog(
+            onDismissRequest = { showRescrapeResultDialog = false },
+            title = { Text("Rescrape Completed") },
+            text = { Text(rescrapeResultMessage) },
+            confirmButton = {
+                Button(onClick = { showRescrapeResultDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
     // --- Custom Glossary Dialog ---
     if (showGlossaryDialog && activeGlossaryBook != null) {
         GlossaryManagerDialog(
             book = activeGlossaryBook!!,
             viewModel = viewModel,
             onDismiss = { showGlossaryDialog = false }
+        )
+    }
+
+    // --- New Chapters Found Dialog ---
+    if (viewModel.showNewChaptersDialog) {
+        val count = viewModel.newChaptersFoundCount
+        val bookName = viewModel.checkedBookEntity?.title ?: "Novel"
+        AlertDialog(
+            onDismissRequest = { viewModel.showNewChaptersDialog = false },
+            title = { Text("New Chapters Found") },
+            text = {
+                if (count > 0) {
+                    Text("Found $count new chapters for \"$bookName\". Do you want to download/get them now?")
+                } else {
+                    Text("No new chapters found for \"$bookName\". Everything is up to date!")
+                }
+            },
+            confirmButton = {
+                if (count > 0) {
+                    Button(
+                        onClick = {
+                            viewModel.startScrapingNewChapters()
+                            onNavigateToScrape()
+                        }
+                    ) {
+                        Text("Yes, Get It")
+                    }
+                } else {
+                    Button(onClick = { viewModel.showNewChaptersDialog = false }) {
+                        Text("OK")
+                    }
+                }
+            },
+            dismissButton = {
+                if (count > 0) {
+                    TextButton(onClick = { viewModel.showNewChaptersDialog = false }) {
+                        Text("No")
+                    }
+                }
+            }
         )
     }
 }
@@ -201,6 +297,9 @@ fun LibraryBookItem(
     onExportEpub: () -> Unit,
     onExportPdf: () -> Unit,
     onDelete: () -> Unit,
+    onRescrapeCorrupted: () -> Unit,
+    onCheckNewChapters: () -> Unit,
+    isCheckingNewChapters: Boolean,
     modifier: Modifier = Modifier
 ) {
     var expandedMenu by remember { mutableStateOf(false) }
@@ -298,6 +397,29 @@ fun LibraryBookItem(
                                 onDismissRequest = { expandedMenu = false }
                             ) {
                                 DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Text("Check for New Chapters")
+                                            if (isCheckingNewChapters) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(16.dp),
+                                                    strokeWidth = 2.dp,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        expandedMenu = false
+                                        onCheckNewChapters()
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                                    enabled = !isCheckingNewChapters
+                                )
+                                DropdownMenuItem(
                                     text = { Text("Manage Glossary") },
                                     onClick = {
                                         expandedMenu = false
@@ -320,6 +442,14 @@ fun LibraryBookItem(
                                         onExportPdf()
                                     },
                                     leadingIcon = { Icon(Icons.Default.CloudDownload, contentDescription = null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Rescrape Corrupted Chapters") },
+                                    onClick = {
+                                        expandedMenu = false
+                                        onRescrapeCorrupted()
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) }
                                 )
                                 Divider()
                                 DropdownMenuItem(
@@ -360,13 +490,25 @@ fun LibraryBookItem(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "${book.totalChapters} Chapters Saved",
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "${book.totalChapters} Chapters Saved",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
                     )
-                )
+                    if (isCheckingNewChapters) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
 
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),

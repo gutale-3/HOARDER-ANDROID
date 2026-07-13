@@ -3,6 +3,7 @@ package com.example.util
 import android.webkit.CookieManager
 import android.webkit.WebView
 import com.example.data.local.BookEntity
+import com.example.data.scraper.NovelSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -17,7 +18,9 @@ import kotlin.coroutines.resume
 
 class CloudflareException(message: String) : IOException(message)
 
-object TomatoScraper {
+object TomatoScraper : NovelSource {
+
+    override val sourceName: String = "TomatoMTL"
 
     private val AD_PATTERNS = listOf(
         Pattern.compile("Read on TomatoMTL", Pattern.CASE_INSENSITIVE),
@@ -35,7 +38,7 @@ object TomatoScraper {
         Pattern.compile("Click to claim [^\\n]*buff!", Pattern.CASE_INSENSITIVE)
     )
 
-    fun parseBookId(url: String): String? {
+    override fun parseBookId(url: String): String? {
         val cleanUrl = url.trim().replace("https://", "").replace("http://", "")
         val segments = cleanUrl.split("/").filter { it.isNotEmpty() }
         val bookIndex = segments.indexOf("book")
@@ -45,7 +48,7 @@ object TomatoScraper {
         return null
     }
 
-    fun parseChapterId(url: String): String? {
+    override fun parseChapterId(url: String): String? {
         val cleanUrl = url.trim().replace("https://", "").replace("http://", "")
         val segments = cleanUrl.split("/").filter { it.isNotEmpty() }
         val bookIndex = segments.indexOf("book")
@@ -163,7 +166,7 @@ object TomatoScraper {
         }
     }
 
-    suspend fun scrapeBookInfo(webView: WebView, url: String): BookEntity {
+    override suspend fun scrapeBookInfo(webView: WebView, url: String): BookEntity {
         val checkJs = """
             (() => {
                 const q = (s) => { const e = document.querySelector(s); return e ? e.innerText.trim() : ""; };
@@ -230,7 +233,7 @@ object TomatoScraper {
         )
     }
 
-    suspend fun scrapeChapterList(webView: WebView, bookUrl: String): List<String> {
+    override suspend fun scrapeChapterList(webView: WebView, bookUrl: String): List<String> {
         val checkJs = """
             (() => {
                 const links = document.querySelectorAll('a.chapter-link, .chapter-container a, .chapter-list a');
@@ -291,10 +294,10 @@ object TomatoScraper {
         return urls
     }
 
-    suspend fun scrapeChapterContent(
+    override suspend fun scrapeChapterContent(
         webView: WebView,
         chapterUrl: String,
-        shouldSkip: () -> Boolean = { false }
+        shouldSkip: () -> Boolean
     ): Pair<String, String> {
         val checkJs = """
             (() => {
@@ -323,6 +326,28 @@ object TomatoScraper {
 
         if (body.isEmpty()) {
             throw IOException("No chapter text content found on page")
+        }
+
+        val bodyLower = body.lowercase()
+        val isInvalidPage = (body.length < 2500 && (
+            bodyLower.contains("login to") || 
+            bodyLower.contains("log in") || 
+            bodyLower.contains("sign in to") || 
+            bodyLower.contains("limit exceeded") || 
+            bodyLower.contains("rate limit") || 
+            bodyLower.contains("too many requests") || 
+            bodyLower.contains("access denied") || 
+            bodyLower.contains("unauthorized") || 
+            bodyLower.contains("forbidden") || 
+            bodyLower.contains("create an account") || 
+            bodyLower.contains("membership") || 
+            bodyLower.contains("please register") ||
+            bodyLower.contains("sign in with") ||
+            bodyLower.contains("google login") ||
+            bodyLower.contains("facebook login")
+        ))
+        if (isInvalidPage) {
+            throw IOException("Captured invalid page (Login/Limit/Error message instead of story text)")
         }
 
         return Pair(title, body)

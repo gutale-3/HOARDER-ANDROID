@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -41,6 +42,7 @@ fun ReaderScreen(
     val bookState by viewModel.repository.getBookFlow(bookId).collectAsState(null)
     val chapters by viewModel.repository.getChaptersFlow(bookId).collectAsState(emptyList())
 
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
@@ -237,6 +239,32 @@ fun ReaderScreen(
                                                 else MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.weight(1f)
                                     )
+
+                                    if (!isMultiSelectMode) {
+                                        if (viewModel.rescrapingChapterId == ch.id) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(20.dp),
+                                                strokeWidth = 2.dp,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        } else {
+                                            IconButton(
+                                                onClick = {
+                                                    viewModel.rescrapeSingleChapter(ch) { success, msg ->
+                                                        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                                    }
+                                                },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Refresh,
+                                                    contentDescription = "Rescrape Chapter",
+                                                    modifier = Modifier.size(16.dp),
+                                                    tint = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             },
                             selected = !isMultiSelectMode && isCurrent,
@@ -305,6 +333,25 @@ fun ReaderScreen(
                         // Text style settings
                         IconButton(onClick = { showSettingsDialog = true }) {
                             Icon(imageVector = Icons.Default.TextFormat, contentDescription = "Font settings")
+                        }
+                        // Rescrape Current Chapter
+                        IconButton(onClick = {
+                            val activeCh = activeChapter
+                            if (activeCh != null) {
+                                viewModel.rescrapeSingleChapter(activeCh) { success, msg ->
+                                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }) {
+                            if (viewModel.rescrapingChapterId == activeChapter?.id) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            } else {
+                                Icon(imageVector = Icons.Default.Refresh, contentDescription = "Rescrape Chapter")
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -401,8 +448,9 @@ fun ReaderScreen(
                     val activePara = viewModel.ttsActiveParagraphIndex ?: -1
                     val isTtsPlaying = viewModel.ttsIsPlaying
                     val playingChapterId = viewModel.ttsPlayingChapter?.id
-                    LaunchedEffect(activePara, isTtsPlaying, playingChapterId) {
-                        if (isTtsPlaying && playingChapterId == activeChapter.id && activePara >= -1) {
+                    val autoScrollEnabled = viewModel.ttsAutoScrollEnabled
+                    LaunchedEffect(activePara, isTtsPlaying, playingChapterId, autoScrollEnabled) {
+                        if (autoScrollEnabled && isTtsPlaying && playingChapterId == activeChapter.id && activePara >= -1) {
                             val targetItemIndex = if (activePara < 0) 0 else activePara + 3
                             
                             // Check if the target item is already comfortably visible
@@ -701,7 +749,7 @@ fun ReaderScreen(
                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
                             )
                             Text(
-                                text = "Keep spoken text in center and auto-scroll",
+                                text = "Dim non-active paragraphs",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -709,6 +757,30 @@ fun ReaderScreen(
                         Switch(
                             checked = viewModel.focusModeEnabled,
                             onCheckedChange = { viewModel.toggleFocusMode() }
+                        )
+                    }
+
+                    // Auto-Scroll Toggle
+                    Divider()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Auto-Follow Spoken Text",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Text(
+                                text = "Automatically scroll page to active sentence",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = viewModel.ttsAutoScrollEnabled,
+                            onCheckedChange = { viewModel.toggleTtsAutoScroll() }
                         )
                     }
                 }

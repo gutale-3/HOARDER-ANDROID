@@ -19,7 +19,7 @@ import java.util.zip.ZipOutputStream
 object NovelCompiler {
 
     /**
-     * Compiles the novel into a standardized, fully valid EPUB file.
+     * Compiles the novel into a standardized, fully valid EPUB 3 file with cover and nav document.
      */
     fun compileEpub(
         context: Context,
@@ -90,16 +90,68 @@ object NovelCompiler {
                     padding-left: 1em;
                     margin: 2em 0;
                 }
+                img.cover {
+                    max-width: 100%;
+                    max-height: 100%;
+                    height: auto;
+                    width: auto;
+                    display: block;
+                    margin: 0 auto;
+                }
             """.trimIndent()
             zipStream.write(css.toByteArray(Charsets.UTF_8))
             zipStream.closeEntry()
 
-            // 4. OEBPS/about.xhtml (Introduction)
+            // Check if cover image exists
+            val coverFile = File(outputFile.parentFile, "cover.jpg")
+            val hasCover = coverFile.exists() && coverFile.length() > 0
+
+            // 4. If cover exists, write cover.jpg and cover.xhtml
+            if (hasCover) {
+                // Write OEBPS/cover.jpg
+                zipStream.putNextEntry(ZipEntry("OEBPS/cover.jpg"))
+                coverFile.inputStream().use { input ->
+                    val buffer = ByteArray(8192)
+                    var len: Int
+                    while (input.read(buffer).also { len = it } != -1) {
+                        zipStream.write(buffer, 0, len)
+                    }
+                }
+                zipStream.closeEntry()
+
+                // Write OEBPS/cover.xhtml
+                zipStream.putNextEntry(ZipEntry("OEBPS/cover.xhtml"))
+                val coverXhtml = """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <!DOCTYPE html>
+                    <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en" lang="en">
+                    <head>
+                        <title>Cover - ${escapeXml(book.title)}</title>
+                        <link rel="stylesheet" type="text/css" href="style.css" />
+                    </head>
+                    <body style="margin:0; padding:0; background-color:#ffffff;">
+                        <div style="text-align:center; height:100vh; display:flex; align-items:center; justify-content:center;">
+                            <img class="cover" src="cover.jpg" alt="Cover Image" />
+                        </div>
+                    </body>
+                    </html>
+                """.trimIndent()
+                zipStream.write(coverXhtml.toByteArray(Charsets.UTF_8))
+                zipStream.closeEntry()
+            }
+
+            // 5. OEBPS/about.xhtml (Introduction)
             zipStream.putNextEntry(ZipEntry("OEBPS/about.xhtml"))
+            val synopsisParas = book.synopsis
+                .split("\n")
+                .map { it.replace("\r", "").trim() }
+                .filter { it.isNotEmpty() }
+                .joinToString("\n") { "<p>${escapeXml(it)}</p>" }
+
             val aboutHtml = """
                 <?xml version="1.0" encoding="UTF-8"?>
-                <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
-                <html xmlns="http://www.w3.org/1999/xhtml">
+                <!DOCTYPE html>
+                <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en" lang="en">
                 <head>
                     <title>About - ${escapeXml(book.title)}</title>
                     <link rel="stylesheet" type="text/css" href="style.css" />
@@ -108,7 +160,7 @@ object NovelCompiler {
                     <h1>${escapeXml(book.title)}</h1>
                     <p style="text-align: center; font-weight: bold;">Author: ${escapeXml(book.author)}</p>
                     <div class="synopsis">
-                        <p>${escapeXml(book.synopsis).replace("\n", "</p><p>")}</p>
+                        $synopsisParas
                     </div>
                 </body>
                 </html>
@@ -116,25 +168,55 @@ object NovelCompiler {
             zipStream.write(aboutHtml.toByteArray(Charsets.UTF_8))
             zipStream.closeEntry()
 
-            // 5. OEBPS/chapters/chapter_X.xhtml files
+            // 6. OEBPS/nav.xhtml (EPUB 3 Navigation Document)
+            zipStream.putNextEntry(ZipEntry("OEBPS/nav.xhtml"))
+            val navListItems = chapters.map { ch ->
+                """<li><a href="chapter_${ch.chapterNumber}.xhtml">${escapeXml(ch.title)}</a></li>"""
+            }.joinToString("\n                ")
+            val navHtml = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <!DOCTYPE html>
+                <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en" lang="en">
+                <head>
+                    <title>Table of Contents</title>
+                    <link rel="stylesheet" type="text/css" href="style.css" />
+                </head>
+                <body>
+                    <nav epub:type="toc" id="toc">
+                        <h1>Table of Contents</h1>
+                        <ol>
+                            <li><a href="about.xhtml">About</a></li>
+                            $navListItems
+                        </ol>
+                    </nav>
+                </body>
+                </html>
+            """.trimIndent()
+            zipStream.write(navHtml.toByteArray(Charsets.UTF_8))
+            zipStream.closeEntry()
+
+            // 7. OEBPS/chapter_X.xhtml files
             for (chapter in chapters) {
                 zipStream.putNextEntry(ZipEntry("OEBPS/chapter_${chapter.chapterNumber}.xhtml"))
                 val contentParas = chapter.content
                     .split("\n")
-                    .filter { it.trim().isNotEmpty() }
-                    .joinToString("") { "<p>${escapeXml(it.trim())}</p>" }
+                    .map { it.replace("\r", "").trim() }
+                    .filter { it.isNotEmpty() }
+                    .joinToString("\n") { "<p>${escapeXml(it)}</p>" }
 
                 val chapHtml = """
                     <?xml version="1.0" encoding="UTF-8"?>
-                    <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
-                    <html xmlns="http://www.w3.org/1999/xhtml">
+                    <!DOCTYPE html>
+                    <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en" lang="en">
                     <head>
                         <title>${escapeXml(chapter.title)}</title>
                         <link rel="stylesheet" type="text/css" href="style.css" />
                     </head>
                     <body>
-                        <h2>${escapeXml(chapter.title)}</h2>
-                        $contentParas
+                        <section epub:type="chapter">
+                            <h2>${escapeXml(chapter.title)}</h2>
+                            $contentParas
+                        </section>
                     </body>
                     </html>
                 """.trimIndent()
@@ -142,7 +224,7 @@ object NovelCompiler {
                 zipStream.closeEntry()
             }
 
-            // 6. OEBPS/toc.ncx (Table of Contents)
+            // 8. OEBPS/toc.ncx (Table of Contents for EPUB2 backwards compatibility)
             zipStream.putNextEntry(ZipEntry("OEBPS/toc.ncx"))
             val navPoints = chapters.mapIndexed { idx, ch ->
                 """
@@ -175,33 +257,40 @@ object NovelCompiler {
             zipStream.write(ncxXml.toByteArray(Charsets.UTF_8))
             zipStream.closeEntry()
 
-            // 7. OEBPS/content.opf (Book manifest)
+            // 9. OEBPS/content.opf (Book manifest & packaging metadata)
             zipStream.putNextEntry(ZipEntry("OEBPS/content.opf"))
+            
             val manifestItems = chapters.map { ch ->
                 """<item id="chap_${ch.chapterNumber}" href="chapter_${ch.chapterNumber}.xhtml" media-type="application/xhtml+xml"/>"""
-            }.joinToString("\n")
+            }.joinToString("\n                    ")
 
             val spineRefs = chapters.map { ch ->
                 """<itemref idref="chap_${ch.chapterNumber}"/>"""
-            }.joinToString("\n")
+            }.joinToString("\n                    ")
 
             val opfXml = """
                 <?xml version="1.0" encoding="UTF-8"?>
-                <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookID" version="2.0">
-                  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+                <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookID" version="3.0">
+                  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
                     <dc:title>${escapeXml(book.title)}</dc:title>
-                    <dc:creator opf:role="aut">${escapeXml(book.author)}</dc:creator>
+                    <dc:creator id="author">${escapeXml(book.author)}</dc:creator>
                     <dc:language>en</dc:language>
-                    <dc:identifier id="BookID" opf:scheme="UUID">${book.id}</dc:identifier>
+                    <dc:identifier id="BookID">${book.id}</dc:identifier>
                     <dc:description>${escapeXml(book.synopsis)}</dc:description>
+                    <meta property="dcterms:modified">2026-07-13T12:00:00Z</meta>
+                    ${if (hasCover) "<meta name=\"cover\" content=\"cover-image\"/>" else ""}
                   </metadata>
                   <manifest>
                     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
                     <item id="style" href="style.css" media-type="text/css"/>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
                     <item id="about" href="about.xhtml" media-type="application/xhtml+xml"/>
+                    ${if (hasCover) """<item id="cover-image" href="cover.jpg" media-type="image/jpeg" properties="cover-image"/>
+                    <item id="cover-xhtml" href="cover.xhtml" media-type="application/xhtml+xml"/>""" else ""}
                     $manifestItems
                   </manifest>
                   <spine toc="ncx">
+                    ${if (hasCover) "<itemref idref=\"cover-xhtml\"/>" else ""}
                     <itemref idref="about"/>
                     $spineRefs
                   </spine>
@@ -272,42 +361,53 @@ object NovelCompiler {
         val coverPage = pdfDocument.startPage(coverPageInfo)
         val canvas = coverPage.canvas
 
-        // Title on cover
-        val titleLayout = StaticLayout.Builder.obtain(book.title, 0, book.title.length, titlePaint, contentWidth)
-            .setAlignment(Layout.Alignment.ALIGN_CENTER)
-            .build()
-        canvas.save()
-        canvas.translate(margin, pageHeight / 4f)
-        titleLayout.draw(canvas)
-        canvas.restore()
+        val coverFile = File(outputFile.parentFile, "cover.jpg")
+        val hasCover = coverFile.exists() && coverFile.length() > 0
 
-        // Author on cover
-        val authorText = "Author: ${book.author}"
-        val authorLayout = StaticLayout.Builder.obtain(authorText, 0, authorText.length, subtitlePaint, contentWidth)
-            .setAlignment(Layout.Alignment.ALIGN_CENTER)
-            .build()
-        canvas.save()
-        canvas.translate(margin, (pageHeight / 4f) + titleLayout.height + 20)
-        authorLayout.draw(canvas)
-        canvas.restore()
+        if (hasCover) {
+            try {
+                val bitmap = android.graphics.BitmapFactory.decodeFile(coverFile.absolutePath)
+                if (bitmap != null) {
+                    // Center the cover image at the upper half of the page
+                    val targetWidth = 260f
+                    val scale = targetWidth / bitmap.width
+                    val targetHeight = bitmap.height * scale
+                    val left = margin + (contentWidth - targetWidth) / 2f
+                    val top = margin + 40f
+                    
+                    canvas.drawBitmap(bitmap, null, android.graphics.RectF(left, top, left + targetWidth, top + targetHeight), null)
+                    bitmap.recycle()
 
-        // Synopsis on cover
-        val synHeader = "Synopsis"
-        val synHeaderLayout = StaticLayout.Builder.obtain(synHeader, 0, synHeader.length, subtitlePaint, contentWidth)
-            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-            .build()
-        canvas.save()
-        canvas.translate(margin, (pageHeight / 2f))
-        synHeaderLayout.draw(canvas)
-        canvas.restore()
+                    // Title below the cover
+                    val titleTop = top + targetHeight + 35f
+                    val coverTitleLayout = StaticLayout.Builder.obtain(book.title, 0, book.title.length, titlePaint, contentWidth)
+                        .setAlignment(Layout.Alignment.ALIGN_CENTER)
+                        .build()
+                    canvas.save()
+                    canvas.translate(margin, titleTop)
+                    coverTitleLayout.draw(canvas)
+                    canvas.restore()
 
-        val synLayout = StaticLayout.Builder.obtain(book.synopsis, 0, book.synopsis.length, textPaint, contentWidth)
-            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-            .build()
-        canvas.save()
-        canvas.translate(margin, (pageHeight / 2f) + synHeaderLayout.height + 10)
-        synLayout.draw(canvas)
-        canvas.restore()
+                    // Author below title
+                    val authorTop = titleTop + coverTitleLayout.height + 15f
+                    val coverAuthorText = "Author: ${book.author}"
+                    val coverAuthorLayout = StaticLayout.Builder.obtain(coverAuthorText, 0, coverAuthorText.length, subtitlePaint, contentWidth)
+                        .setAlignment(Layout.Alignment.ALIGN_CENTER)
+                        .build()
+                    canvas.save()
+                    canvas.translate(margin, authorTop)
+                    coverAuthorLayout.draw(canvas)
+                    canvas.restore()
+                } else {
+                    drawDefaultCoverText(canvas, book, titlePaint, subtitlePaint, textPaint, margin, contentWidth, pageHeight)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                drawDefaultCoverText(canvas, book, titlePaint, subtitlePaint, textPaint, margin, contentWidth, pageHeight)
+            }
+        } else {
+            drawDefaultCoverText(canvas, book, titlePaint, subtitlePaint, textPaint, margin, contentWidth, pageHeight)
+        }
 
         pdfDocument.finishPage(coverPage)
 
@@ -378,8 +478,8 @@ object NovelCompiler {
                 if (lineCountToDraw > 0 && activeCanvas != null) {
                     // Draw this block of lines
                     activeCanvas.save()
-                    // Clip canvas to the printable area of the page
-                    activeCanvas.clipRect(margin, contentY, margin + contentWidth, contentY + maxAvailableHeight)
+                    // Clip canvas strictly to heightToDraw to prevent next-page line bleed
+                    activeCanvas.clipRect(margin, contentY, margin + contentWidth, contentY + heightToDraw)
                     // Draw lines starting offset by negative drawY
                     activeCanvas.translate(margin, contentY - drawY)
                     contentLayout.draw(activeCanvas)
@@ -405,6 +505,54 @@ object NovelCompiler {
         } finally {
             pdfDocument.close()
         }
+    }
+
+    private fun drawDefaultCoverText(
+        canvas: Canvas,
+        book: BookEntity,
+        titlePaint: TextPaint,
+        subtitlePaint: TextPaint,
+        textPaint: TextPaint,
+        margin: Float,
+        contentWidth: Int,
+        pageHeight: Int
+    ) {
+        // Title on cover
+        val titleLayout = StaticLayout.Builder.obtain(book.title, 0, book.title.length, titlePaint, contentWidth)
+            .setAlignment(Layout.Alignment.ALIGN_CENTER)
+            .build()
+        canvas.save()
+        canvas.translate(margin, pageHeight / 4f)
+        titleLayout.draw(canvas)
+        canvas.restore()
+
+        // Author on cover
+        val authorText = "Author: ${book.author}"
+        val authorLayout = StaticLayout.Builder.obtain(authorText, 0, authorText.length, subtitlePaint, contentWidth)
+            .setAlignment(Layout.Alignment.ALIGN_CENTER)
+            .build()
+        canvas.save()
+        canvas.translate(margin, (pageHeight / 4f) + titleLayout.height + 20)
+        authorLayout.draw(canvas)
+        canvas.restore()
+
+        // Synopsis on cover
+        val synHeader = "Synopsis"
+        val synHeaderLayout = StaticLayout.Builder.obtain(synHeader, 0, synHeader.length, subtitlePaint, contentWidth)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .build()
+        canvas.save()
+        canvas.translate(margin, (pageHeight / 2f))
+        synHeaderLayout.draw(canvas)
+        canvas.restore()
+
+        val synLayout = StaticLayout.Builder.obtain(book.synopsis, 0, book.synopsis.length, textPaint, contentWidth)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .build()
+        canvas.save()
+        canvas.translate(margin, (pageHeight / 2f) + synHeaderLayout.height + 10)
+        synLayout.draw(canvas)
+        canvas.restore()
     }
 
     private fun escapeXml(input: String): String {

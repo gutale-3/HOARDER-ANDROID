@@ -92,12 +92,18 @@ interface BookDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPolishedChapter(polished: PolishedChapterEntity)
 
+    @Query("DELETE FROM polished_chapters WHERE chapterId = :chapterId")
+    suspend fun deletePolishedChapter(chapterId: String)
+
     // --- Chapter Recaps ---
     @Query("SELECT * FROM chapter_recaps WHERE chapterId = :chapterId")
     suspend fun getChapterRecap(chapterId: String): ChapterRecapEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertChapterRecap(recap: ChapterRecapEntity)
+
+    @Query("DELETE FROM chapter_recaps WHERE chapterId = :chapterId")
+    suspend fun deleteChapterRecap(chapterId: String)
 
     // --- Bulk Updates / Find-and-Replace ---
     @Query("UPDATE chapters SET content = :content WHERE id = :id")

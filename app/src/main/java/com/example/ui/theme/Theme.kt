@@ -4,7 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 
 @Composable
-fun MyApplicationTheme(
+fun NovelHoarderTheme(
   appTheme: AppTheme = AppTheme.IMMERSIVE_UI,
   content: @Composable () -> Unit,
 ) {

@@ -59,6 +59,7 @@ android {
   testOptions { unitTests { isIncludeAndroidResources = true } }
   packaging {
     jniLibs {
+      useLegacyPackaging = true
       pickFirsts.add("**/libonnxruntime.so")
     }
   }
