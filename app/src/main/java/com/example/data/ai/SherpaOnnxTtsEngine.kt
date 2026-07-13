@@ -1,158 +1,255 @@
 package com.example.data.ai
 
 import android.content.Context
-import ai.onnxruntime.OrtEnvironment
-import ai.onnxruntime.OrtSession
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioTrack
+import com.k2fsa.sherpa.onnx.OfflineTts
+import com.k2fsa.sherpa.onnx.OfflineTtsConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
+import kotlinx.coroutines.*
 import java.io.File
-import java.io.FileOutputStream
-import java.util.Locale
 
 class SherpaOnnxTtsEngine(private val context: Context) {
 
-    private var ortEnv: OrtEnvironment? = null
-    private var ortSession: OrtSession? = null
-    private var nativeTts: TextToSpeech? = null
-    private var isTtsInitialized = false
+    private val modelManager = PiperModelManager(context)
+    private var offlineTts: OfflineTts? = null
+    private var loadedVoiceId: String? = null
     
-    // Check if the model file is downloaded
-    fun isModelDownloaded(): Boolean {
-        val modelFile = File(context.filesDir, "ljspeech-medium.onnx")
-        return modelFile.exists() && modelFile.length() > 0
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var activeJob: Job? = null
+    private var audioTrack: AudioTrack? = null
+    
+    @Volatile
+    private var isPlaying = false
+    
+    var selectedVoiceId: String = PiperVoiceCatalog.AMY_LOW.id
+    var selectedSpeakerId: Int = 0
+
+    // Ensure the current voice engine is loaded and initialized
+    private fun initEngine(voice: PiperVoice): OfflineTts? {
+        if (offlineTts != null && loadedVoiceId == voice.id) {
+            return offlineTts
+        }
+        
+        // Release previous engine
+        releaseEngine()
+        
+        if (!modelManager.isVoiceDownloaded(voice)) {
+            return null
+        }
+        
+        try {
+            val voiceDir = modelManager.getVoiceModelDir(voice)
+            val modelPath = File(voiceDir, voice.modelFilename).absolutePath
+            val tokensPath = File(voiceDir, voice.tokensFilename).absolutePath
+            val dataDir = File(voiceDir, "espeak-ng-data").absolutePath
+            
+            val vitsConfig = OfflineTtsVitsModelConfig(
+                model = modelPath,
+                tokens = tokensPath,
+                dataDir = dataDir,
+                lengthScale = 1.0f // Speed is controlled at generation time
+            )
+            
+            val modelConfig = OfflineTtsModelConfig(
+                vits = vitsConfig,
+                numThreads = 2,
+                provider = "cpu"
+            )
+            
+            val config = OfflineTtsConfig(
+                model = modelConfig,
+                maxNumSentences = 1
+            )
+            
+            offlineTts = OfflineTts(config = config)
+            loadedVoiceId = voice.id
+            return offlineTts
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return null
+        }
+    }
+    
+    private fun releaseEngine() {
+        try {
+            offlineTts?.release()
+        } catch (e: Exception) {
+            // ignore
+        }
+        offlineTts = null
+        loadedVoiceId = null
     }
 
-    // Download the ljspeech-medium.onnx model
+    fun isModelDownloaded(): Boolean {
+        val voice = PiperVoiceCatalog.getVoiceById(selectedVoiceId)
+        return modelManager.isVoiceDownloaded(voice)
+    }
+
     suspend fun downloadModel(
         onProgress: (Int) -> Unit,
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
-    ) = withContext(Dispatchers.IO) {
-        val targetFile = File(context.filesDir, "ljspeech-medium.onnx")
-        try {
-            // Simulated / real robust download to keep it fast and responsive
-            // We'll perform a smooth, realistic progress update while ensuring the file is generated
-            for (percent in 1..100 step 5) {
-                delay(100)
-                onProgress(percent)
-            }
-            
-            if (!targetFile.exists()) {
-                targetFile.writeText("piper onnx premium offline voice model placeholder")
-            }
-            
+    ) {
+        val voice = PiperVoiceCatalog.getVoiceById(selectedVoiceId)
+        val result = modelManager.downloadAndExtractVoice(voice, onProgress)
+        if (result.isSuccess) {
             onSuccess()
-        } catch (e: Exception) {
-            onFailure(e.localizedMessage ?: "Unknown download failure")
+        } else {
+            onFailure(result.exceptionOrNull()?.message ?: "Failed to download model")
         }
     }
 
-    // Delete model
     fun deleteModel(): Boolean {
-        val modelFile = File(context.filesDir, "ljspeech-medium.onnx")
-        if (modelFile.exists()) {
-            return modelFile.delete()
-        }
-        return false
+        val voice = PiperVoiceCatalog.getVoiceById(selectedVoiceId)
+        releaseEngine()
+        return modelManager.deleteVoice(voice)
     }
 
-    // Initialize the local ONNX session to verify the model file can be loaded
     fun initOnnx() {
-        if (!isModelDownloaded()) return
-        try {
-            if (ortEnv == null) {
-                ortEnv = OrtEnvironment.getEnvironment()
-            }
-            val modelFile = File(context.filesDir, "ljspeech-medium.onnx")
-            if (modelFile.exists() && ortSession == null) {
-                // Load ONNX session for verification
-                val options = OrtSession.SessionOptions()
-                ortSession = ortEnv?.createSession(modelFile.absolutePath, options)
-            }
-        } catch (e: Exception) {
-            // Log / ignore ONNX parsing of placeholder files
-        }
+        // Automatically initialized on speak, or pre-warmed here
+        val voice = PiperVoiceCatalog.getVoiceById(selectedVoiceId)
+        initEngine(voice)
     }
 
-    // Speak using the offline engine. Delegates to a deeply tuned offline narrator flow.
     fun speak(
         text: String,
         speed: Float,
-        pitch: Float,
+        pitch: Float, // Pitch is ignored as Piper uses lengthScale for speed
         onStart: (Int) -> Unit,
         onDone: () -> Unit
     ) {
-        // Initialize the native TTS with offline-optimized parameters to simulate Piper output
-        if (nativeTts == null) {
-            nativeTts = TextToSpeech(context) { status ->
-                if (status == TextToSpeech.SUCCESS) {
-                    isTtsInitialized = true
-                    nativeTts?.language = Locale.US
-                    nativeTts?.setPitch(pitch * 0.85f) // Narrative pitch is usually slightly lower / warmer
-                    nativeTts?.setSpeechRate(speed * 0.95f) // Narrator pace
-                    executeSpeak(text, onStart, onDone)
+        stop()
+        
+        isPlaying = true
+        activeJob = scope.launch {
+            val voice = PiperVoiceCatalog.getVoiceById(selectedVoiceId)
+            val tts = initEngine(voice)
+            if (tts == null) {
+                withContext(Dispatchers.Main) {
+                    onDone()
                 }
+                return@launch
             }
-        } else {
-            nativeTts?.setPitch(pitch * 0.85f)
-            nativeTts?.setSpeechRate(speed * 0.95f)
-            executeSpeak(text, onStart, onDone)
+            
+            // Split paragraphs to keep latency low and allow cancellation per paragraph
+            val paragraphs = text.split("\n")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            
+            try {
+                for (idx in paragraphs.indices) {
+                    if (!isPlaying) break
+                    
+                    // Callback that paragraph is starting
+                    withContext(Dispatchers.Main) {
+                        onStart(idx)
+                    }
+                    
+                    val paraText = paragraphs[idx]
+                    
+                    // Generate audio for the paragraph
+                    // Note: lengthScale (speed) in Piper works inversely: 1.0/speed
+                    val lengthScale = if (speed > 0) 1.0f / speed else 1.0f
+                    val audio = tts.generate(
+                        text = paraText,
+                        sid = selectedSpeakerId,
+                        speed = lengthScale
+                    )
+                    
+                    if (!isPlaying) break
+                    
+                    // Play the generated audio samples
+                    playSamples(audio.samples, audio.sampleRate)
+                }
+                
+                if (isPlaying) {
+                    withContext(Dispatchers.Main) {
+                        onDone()
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    onDone()
+                }
+            } finally {
+                isPlaying = false
+            }
         }
     }
 
-    private fun executeSpeak(text: String, onStart: (Int) -> Unit, onDone: () -> Unit) {
-        val tts = nativeTts ?: return
+    private suspend fun playSamples(samples: FloatArray, sampleRate: Int) = withContext(Dispatchers.IO) {
+        val minBufferSize = AudioTrack.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_FLOAT
+        )
         
-        // Split paragraphs
-        val paragraphs = text.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+        val bufferSize = maxOf(minBufferSize, samples.size * 4)
         
-        tts.stop()
+        val track = AudioTrack(
+            AudioManager.STREAM_MUSIC,
+            sampleRate,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_FLOAT,
+            bufferSize,
+            AudioTrack.MODE_STREAM
+        )
         
-        paragraphs.forEachIndexed { idx, para ->
-            tts.speak(para, TextToSpeech.QUEUE_ADD, null, "premium_para_$idx")
+        synchronized(this@SherpaOnnxTtsEngine) {
+            audioTrack = track
         }
-
-        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) {
-                if (utteranceId != null && utteranceId.startsWith("premium_para_")) {
-                    val idx = utteranceId.substringAfterLast("_").toIntOrNull()
-                    if (idx != null) {
-                        onStart(idx)
-                    }
+        
+        try {
+            track.play()
+            
+            // Write audio samples in small chunks to support fast stop/interruption
+            val chunkSize = 8192
+            var offset = 0
+            while (offset < samples.size && isPlaying) {
+                val len = minOf(chunkSize, samples.size - offset)
+                track.write(samples, offset, len, AudioTrack.WRITE_BLOCKING)
+                offset += len
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            try {
+                track.stop()
+                track.release()
+            } catch (e: Exception) {
+                // ignore
+            }
+            synchronized(this@SherpaOnnxTtsEngine) {
+                if (audioTrack == track) {
+                    audioTrack = null
                 }
             }
-
-            override fun onDone(utteranceId: String?) {
-                if (utteranceId != null && utteranceId.startsWith("premium_para_${paragraphs.size - 1}")) {
-                    onDone()
-                }
-            }
-
-            @Deprecated("Deprecated in Java")
-            override fun onError(utteranceId: String?) {}
-        })
+        }
     }
 
     fun stop() {
-        nativeTts?.stop()
+        isPlaying = false
+        activeJob?.cancel()
+        activeJob = null
+        
+        synchronized(this) {
+            try {
+                audioTrack?.stop()
+                audioTrack?.flush()
+                audioTrack?.release()
+                audioTrack = null
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
     }
 
     fun shutdown() {
-        nativeTts?.stop()
-        nativeTts?.shutdown()
-        nativeTts = null
-        try {
-            ortSession?.close()
-            ortSession = null
-            ortEnv?.close()
-            ortEnv = null
-        } catch (e: Exception) {
-            // ignore
-        }
+        stop()
+        releaseEngine()
     }
 }

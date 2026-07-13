@@ -372,74 +372,10 @@ fun AiSettingsDialog(
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "Switch to a premium, deeply natural 'Audible-style' narrator that runs 100% offline. Download the lightweight open-source Piper TTS model (~25MB) to enable it.",
+                        text = "Highly realistic, deeply natural offline narration is fully supported! You can select, download, and manage multiple Piper voices (including Ryan, Amy, Alan, and LibriTTS) directly from the central Audio Player settings on the book reader screen.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    if (viewModel.premiumVoiceDownloaded) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "ljspeech-medium.onnx loaded (Active)",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Button(
-                                onClick = {
-                                    viewModel.deletePremiumVoice()
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.error
-                                ),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete Voice")
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Delete")
-                            }
-                        }
-                    } else if (viewModel.premiumVoiceDownloading) {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                text = "Downloading Voice Model: ${viewModel.premiumVoiceDownloadProgress}%",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            LinearProgressIndicator(
-                                progress = viewModel.premiumVoiceDownloadProgress / 100f,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    } else {
-                        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            if (viewModel.premiumVoiceDownloadError != null) {
-                                Text(
-                                    text = viewModel.premiumVoiceDownloadError ?: "",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                            }
-                            Button(
-                                onClick = {
-                                    viewModel.downloadPremiumVoice()
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Icon(Icons.Default.Download, contentDescription = "Download Voice")
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Download Premium Voice (25 MB)")
-                            }
-                        }
-                    }
                 }
             }
         },

@@ -397,12 +397,24 @@ fun ReaderScreen(
                         lazyListState.scrollToItem(0)
                     }
 
-                    // Auto-scroll when active paragraph changes in Focus Mode
+                    // Auto-follow scroll: Keep the active TTS paragraph centered and visible
                     val activePara = viewModel.ttsActiveParagraphIndex ?: -1
-                    LaunchedEffect(activePara, viewModel.focusModeEnabled) {
-                        if (viewModel.focusModeEnabled && activePara >= 0) {
-                            // Paragraph index `activePara` corresponds to item index `activePara + 3`
-                            lazyListState.animateScrollToItem(activePara + 3)
+                    val isTtsPlaying = viewModel.ttsIsPlaying
+                    val playingChapterId = viewModel.ttsPlayingChapter?.id
+                    LaunchedEffect(activePara, isTtsPlaying, playingChapterId) {
+                        if (isTtsPlaying && playingChapterId == activeChapter.id && activePara >= -1) {
+                            val targetItemIndex = if (activePara < 0) 0 else activePara + 3
+                            
+                            // Check if the target item is already comfortably visible
+                            val isVisible = lazyListState.layoutInfo.visibleItemsInfo.any {
+                                it.index == targetItemIndex && it.offset >= 0 && (it.offset + it.size) <= (lazyListState.layoutInfo.viewportEndOffset - lazyListState.layoutInfo.viewportStartOffset)
+                            }
+                            
+                            if (!isVisible) {
+                                val viewportHeight = lazyListState.layoutInfo.viewportEndOffset - lazyListState.layoutInfo.viewportStartOffset
+                                val offset = if (viewportHeight > 0) -viewportHeight / 3 else -200
+                                lazyListState.animateScrollToItem(targetItemIndex, offset)
+                            }
                         }
                     }
 

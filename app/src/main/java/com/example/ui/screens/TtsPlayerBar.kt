@@ -449,14 +449,17 @@ fun TtsPlayerBar(
                         ) {
                             items(viewModel.ttsVoices) { voice ->
                                 val isSelected = voice.id == viewModel.selectedVoiceId
-                                if (voice.id == "premium_piper") {
+                                if (voice.id.startsWith("vits-piper-")) {
+                                    val piperVoice = com.example.data.ai.PiperVoiceCatalog.getVoiceById(voice.id)
+                                    val isDownloaded = viewModel.isVoiceDownloaded(piperVoice)
+                                    val isThisVoiceDownloading = viewModel.premiumVoiceDownloading && viewModel.sherpaOnnxTtsEngine.selectedVoiceId == voice.id
                                     Card(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .padding(vertical = 4.dp)
                                             .clip(RoundedCornerShape(12.dp))
                                             .clickable {
-                                                if (viewModel.premiumVoiceDownloaded) {
+                                                if (isDownloaded) {
                                                     viewModel.setTtsVoice(voice)
                                                 }
                                             },
@@ -487,7 +490,7 @@ fun TtsPlayerBar(
                                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                                     ) {
                                                         Text(
-                                                            text = "Piper TTS (Offline Engine)",
+                                                            text = "Piper - ${piperVoice.name}",
                                                             style = MaterialTheme.typography.bodyMedium.copy(
                                                                 fontWeight = FontWeight.Bold,
                                                                 color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
@@ -502,14 +505,18 @@ fun TtsPlayerBar(
                                                         )
                                                     }
                                                     Text(
-                                                        text = if (viewModel.premiumVoiceDownloaded) "Deeply natural voice • 100% Offline" else "Lightweight open-source Piper voice (~25MB)",
+                                                        text = if (isDownloaded) {
+                                                            "${piperVoice.gender} • ${piperVoice.accent} • 100% Offline"
+                                                        } else {
+                                                            "${piperVoice.gender} • ${piperVoice.accent} • ~${piperVoice.sizeMb}MB"
+                                                        },
                                                         style = MaterialTheme.typography.labelSmall,
                                                         color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                                                         else MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
                                                 }
                                                 
-                                                if (isSelected && viewModel.premiumVoiceDownloaded) {
+                                                if (isSelected && isDownloaded) {
                                                     Icon(
                                                         imageVector = Icons.Default.CheckCircle,
                                                         contentDescription = "Selected",
@@ -519,7 +526,46 @@ fun TtsPlayerBar(
                                                 }
                                             }
 
-                                            if (viewModel.premiumVoiceDownloading) {
+                                            Text(
+                                                text = piperVoice.description,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                                else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+
+                                            if (isSelected && voice.id == "vits-piper-en_US-libritts_r-medium") {
+                                                var speakerIdInput by remember { mutableStateOf(viewModel.getSpeakerId(voice.id).toString()) }
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "Speaker ID (0-900+):",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    TextField(
+                                                        value = speakerIdInput,
+                                                        onValueChange = { newVal ->
+                                                            if (newVal.all { it.isDigit() }) {
+                                                                speakerIdInput = newVal
+                                                                val sId = newVal.toIntOrNull() ?: 0
+                                                                viewModel.saveSpeakerId(voice.id, sId)
+                                                            }
+                                                        },
+                                                        modifier = Modifier.width(80.dp),
+                                                        textStyle = MaterialTheme.typography.bodySmall,
+                                                        singleLine = true,
+                                                        colors = TextFieldDefaults.colors(
+                                                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                                            unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)
+                                                        )
+                                                    )
+                                                }
+                                            }
+
+                                            if (isThisVoiceDownloading) {
                                                 Column(
                                                     modifier = Modifier.fillMaxWidth(),
                                                     verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -548,15 +594,16 @@ fun TtsPlayerBar(
                                                         trackColor = MaterialTheme.colorScheme.surfaceVariant
                                                     )
                                                 }
-                                            } else if (!viewModel.premiumVoiceDownloaded) {
+                                            } else if (!isDownloaded) {
                                                 Button(
-                                                    onClick = { viewModel.downloadPremiumVoice() },
+                                                    onClick = { viewModel.downloadPremiumVoice(piperVoice) },
                                                     modifier = Modifier.fillMaxWidth(),
                                                     shape = RoundedCornerShape(8.dp),
                                                     colors = ButtonDefaults.buttonColors(
                                                         containerColor = MaterialTheme.colorScheme.primary
                                                     ),
-                                                    contentPadding = PaddingValues(vertical = 4.dp)
+                                                    contentPadding = PaddingValues(vertical = 4.dp),
+                                                    enabled = !viewModel.premiumVoiceDownloading
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Default.Download,
@@ -565,7 +612,7 @@ fun TtsPlayerBar(
                                                     )
                                                     Spacer(modifier = Modifier.width(6.dp))
                                                     Text(
-                                                        text = "Download & Enable Piper Voice",
+                                                        text = if (viewModel.premiumVoiceDownloading) "Another download in progress" else "Download Voice",
                                                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
                                                     )
                                                 }
@@ -596,7 +643,7 @@ fun TtsPlayerBar(
                                                     }
 
                                                     IconButton(
-                                                        onClick = { viewModel.deletePremiumVoice() },
+                                                        onClick = { viewModel.deletePremiumVoice(piperVoice) },
                                                         modifier = Modifier.size(32.dp)
                                                     ) {
                                                         Icon(

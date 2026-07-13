@@ -20,6 +20,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.local.*
 import com.example.data.repository.NovelRepository
 import com.example.data.ai.SherpaOnnxTtsEngine
+import com.example.data.ai.PiperVoice
+import com.example.data.ai.PiperVoiceCatalog
 import com.example.ui.theme.AppTheme
 import com.example.util.CloudflareException
 import com.example.util.NovelCompiler
@@ -808,8 +810,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Premium Piper offline voice properties
     val sherpaOnnxTtsEngine = SherpaOnnxTtsEngine(getApplication())
-    var premiumVoiceDownloaded by mutableStateOf(sherpaOnnxTtsEngine.isModelDownloaded())
-        private set
     var premiumVoiceDownloading by mutableStateOf(false)
         private set
     var premiumVoiceDownloadProgress by mutableStateOf(0)
@@ -817,8 +817,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var premiumVoiceDownloadError by mutableStateOf<String?>(null)
         private set
 
-    fun downloadPremiumVoice() {
-        if (premiumVoiceDownloaded || premiumVoiceDownloading) return
+    fun isVoiceDownloaded(voice: PiperVoice): Boolean {
+        val oldId = sherpaOnnxTtsEngine.selectedVoiceId
+        sherpaOnnxTtsEngine.selectedVoiceId = voice.id
+        val res = sherpaOnnxTtsEngine.isModelDownloaded()
+        sherpaOnnxTtsEngine.selectedVoiceId = oldId
+        return res
+    }
+
+    fun downloadPremiumVoice(voice: PiperVoice) {
+        if (premiumVoiceDownloading) return
+        sherpaOnnxTtsEngine.selectedVoiceId = voice.id
         premiumVoiceDownloading = true
         premiumVoiceDownloadError = null
         viewModelScope.launch(Dispatchers.Main) {
@@ -827,30 +836,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     premiumVoiceDownloadProgress = progress
                 },
                 onSuccess = {
-                    premiumVoiceDownloaded = true
                     premiumVoiceDownloading = false
+                    setTtsVoice(VoiceOption(voice.id, "Piper - ${voice.name}", Locale.US))
                     initTts()
-                    addLog("Premium Offline Voice (Piper) downloaded successfully.")
+                    addLog("Piper Voice (${voice.name}) downloaded successfully.")
                 },
                 onFailure = { error ->
                     premiumVoiceDownloadError = error
                     premiumVoiceDownloading = false
-                    addLog("Error downloading Premium Offline Voice: $error")
+                    addLog("Error downloading Piper Voice (${voice.name}): $error")
                 }
             )
         }
     }
 
-    fun deletePremiumVoice() {
+    fun deletePremiumVoice(voice: PiperVoice) {
+        val oldVoiceId = sherpaOnnxTtsEngine.selectedVoiceId
+        sherpaOnnxTtsEngine.selectedVoiceId = voice.id
         if (sherpaOnnxTtsEngine.deleteModel()) {
-            premiumVoiceDownloaded = false
-            if (selectedVoiceId == "premium_piper") {
+            if (selectedVoiceId == voice.id) {
                 val defaultVoice = ttsVoices.find { it.id.startsWith("default_") } ?: ttsVoices.firstOrNull()
                 defaultVoice?.let { setTtsVoice(it) }
             }
             initTts()
-            addLog("Premium Offline Voice (Piper) model file deleted.")
+            addLog("Piper Voice (${voice.name}) model deleted.")
         }
+        sherpaOnnxTtsEngine.selectedVoiceId = selectedVoiceId
+    }
+
+    fun saveSpeakerId(voiceId: String, speakerId: Int) {
+        prefs.edit().putInt("tts_speaker_id_$voiceId", speakerId).apply()
+        // If it's the currently playing voice, reload the speaker ID
+        if (selectedVoiceId == voiceId && ttsIsPlaying) {
+            val book = ttsPlayingBook
+            val chapter = ttsPlayingChapter
+            if (book != null && chapter != null) {
+                speak(chapter.content, book, chapter, startFromParagraphIndex = ttsActiveParagraphIndex ?: 0)
+            }
+        }
+    }
+
+    fun getSpeakerId(voiceId: String): Int {
+        return prefs.getInt("tts_speaker_id_$voiceId", 0)
     }
 
     // Sleep Timer state
@@ -1053,10 +1080,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 
                 var finalVoices = availableVoices.distinctBy { it.id }
-                finalVoices = listOf(VoiceOption("premium_piper", "Premium Offline Voice (Piper TTS)", Locale.US)) + finalVoices
+                val piperVoiceOptions = PiperVoiceCatalog.ALL_VOICES.map { voice ->
+                    VoiceOption(voice.id, "Piper - ${voice.name}", Locale.US)
+                }
+                finalVoices = piperVoiceOptions + finalVoices
                 ttsVoices = finalVoices
 
-                val savedVoice = prefs.getString("tts_selected_voice", "") ?: ""
+                var savedVoice = prefs.getString("tts_selected_voice", "") ?: ""
+                if (savedVoice == "premium_piper" || savedVoice.isEmpty()) {
+                    savedVoice = PiperVoiceCatalog.AMY_LOW.id
+                }
                 if (savedVoice.isNotEmpty()) {
                     val matched = ttsVoices.find { it.id == savedVoice }
                     if (matched != null) {
@@ -1080,8 +1113,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setTtsVoice(voiceOption: VoiceOption) {
         selectedVoiceId = voiceOption.id
         prefs.edit().putString("tts_selected_voice", voiceOption.id).apply()
-        if (voiceOption.id == "premium_piper") {
-            // Handled internally by the premium voice synthesizer
+        if (voiceOption.id.startsWith("vits-piper-")) {
+            sherpaOnnxTtsEngine.selectedVoiceId = voiceOption.id
+            sherpaOnnxTtsEngine.selectedSpeakerId = getSpeakerId(voiceOption.id)
         } else if (voiceOption.id.startsWith("default_")) {
             tts?.setLanguage(voiceOption.locale)
         } else {
@@ -1241,7 +1275,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             repository.updateBook(updatedBook)
         }
 
-        if (selectedVoiceId == "premium_piper" && premiumVoiceDownloaded) {
+        val isPiper = selectedVoiceId.startsWith("vits-piper-")
+        val piperVoice = if (isPiper) PiperVoiceCatalog.getVoiceById(selectedVoiceId) else null
+        val isDownloaded = piperVoice != null && isVoiceDownloaded(piperVoice)
+
+        if (isPiper && isDownloaded) {
             viewModelScope.launch(Dispatchers.Main) {
                 ttsPlayingBook = book
                 ttsPlayingChapter = chapter
@@ -1268,6 +1306,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     chapter.title + "\n" + cleanText
                 }
 
+                sherpaOnnxTtsEngine.selectedVoiceId = selectedVoiceId
+                sherpaOnnxTtsEngine.selectedSpeakerId = getSpeakerId(selectedVoiceId)
                 sherpaOnnxTtsEngine.initOnnx()
                 sherpaOnnxTtsEngine.speak(
                     text = textToSpeak,
@@ -1412,7 +1452,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun pauseTts() {
         if (ttsIsPlaying) {
-            if (selectedVoiceId == "premium_piper") {
+            if (selectedVoiceId.startsWith("vits-piper-")) {
                 sherpaOnnxTtsEngine.stop()
             } else {
                 tts?.stop()
@@ -1432,7 +1472,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopTts() {
-        if (selectedVoiceId == "premium_piper") {
+        if (selectedVoiceId.startsWith("vits-piper-")) {
             sherpaOnnxTtsEngine.stop()
         } else {
             tts?.stop()

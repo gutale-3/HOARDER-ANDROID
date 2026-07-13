@@ -57,6 +57,11 @@ android {
     buildConfig = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
+  packaging {
+    jniLibs {
+      pickFirsts.add("**/libonnxruntime.so")
+    }
+  }
 }
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
@@ -115,7 +120,7 @@ dependencies {
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
   implementation(libs.mediapipe.tasks.genai)
-  implementation(libs.onnxruntime.android)
+  // implementation(libs.onnxruntime.android)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
@@ -135,4 +140,6 @@ dependencies {
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
   implementation(libs.jsoup)
+  implementation(libs.sherpa.onnx)
+  implementation(libs.commons.compress)
 }
