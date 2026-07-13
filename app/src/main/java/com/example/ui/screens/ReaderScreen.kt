@@ -2,7 +2,6 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -31,10 +30,6 @@ import com.example.data.local.ChapterEntity
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.launch
 
-// Number of non-paragraph header items (title, AI toolbar, spacer) that precede the
-// paragraph items in the reader LazyColumn — keeps auto-scroll aligned with highlight.
-private const val READER_HEADER_ITEMS = 3
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReaderScreen(
@@ -55,8 +50,6 @@ fun ReaderScreen(
         "mono" -> FontFamily.Monospace
         else -> FontFamily.Serif
     }
-
-    val context = androidx.compose.ui.platform.LocalContext.current
 
     // Settings panel toggles
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -305,28 +298,6 @@ fun ReaderScreen(
                             }
                             Icon(imageVector = icon, contentDescription = "Listen to Chapter")
                         }
-                        // Re-scrape this chapter (fixes a chapter that scraped wrong)
-                        IconButton(
-                            onClick = {
-                                val activeCh = activeChapter
-                                if (activeCh != null && !viewModel.isReScraping) {
-                                    viewModel.reScrapeChapter(activeCh) { ok ->
-                                        android.widget.Toast.makeText(
-                                            context,
-                                            if (ok) "Chapter re-fetched." else "Re-scrape failed — try the Scrape tab.",
-                                            android.widget.Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                                }
-                            },
-                            enabled = !viewModel.isReScraping
-                        ) {
-                            if (viewModel.isReScraping) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(imageVector = Icons.Default.Refresh, contentDescription = "Re-scrape this chapter")
-                            }
-                        }
                         // Open TOC drawer
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(imageVector = Icons.Default.FormatListNumbered, contentDescription = "Chapter Index")
@@ -421,32 +392,17 @@ fun ReaderScreen(
                     // Actual reading canvas (scrollable with generous line spacing and custom font size!)
                     val lazyListState = rememberLazyListState()
 
-                    // Manual override: hand-scrolling temporarily suspends auto-follow.
-                    var followSuspended by remember { mutableStateOf(false) }
-                    val isDragged by lazyListState.interactionSource.collectIsDraggedAsState()
-                    LaunchedEffect(isDragged) {
-                        if (isDragged) {
-                            followSuspended = true
-                        } else if (followSuspended) {
-                            kotlinx.coroutines.delay(4000)
-                            followSuspended = false
-                        }
-                    }
-
                     // Reset scroll state on chapter change
                     LaunchedEffect(currentChapterId) {
                         lazyListState.scrollToItem(0)
-                        followSuspended = false
                     }
 
-                    // Auto-follow: keep the narrated paragraph in view while TTS plays.
+                    // Auto-scroll when active paragraph changes in Focus Mode
                     val activePara = viewModel.ttsActiveParagraphIndex ?: -1
-                    LaunchedEffect(activePara, viewModel.autoScrollEnabled, followSuspended, viewModel.ttsIsPlaying) {
-                        if (viewModel.autoScrollEnabled && !followSuspended &&
-                            viewModel.ttsIsPlaying && activePara >= 0
-                        ) {
-                            // Paragraph index maps to list item index offset by the header items.
-                            lazyListState.animateScrollToItem(activePara + READER_HEADER_ITEMS)
+                    LaunchedEffect(activePara, viewModel.focusModeEnabled) {
+                        if (viewModel.focusModeEnabled && activePara >= 0) {
+                            // Paragraph index `activePara` corresponds to item index `activePara + 3`
+                            lazyListState.animateScrollToItem(activePara + 3)
                         }
                     }
 
@@ -720,44 +676,20 @@ fun ReaderScreen(
                         }
                     }
 
-                    // Auto-scroll (follow narration) toggle
+                    // Focus Mode Toggle
                     Divider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Auto-scroll with narration",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
-                            )
-                            Text(
-                                text = "Automatically follow the voice. Scroll by hand to pause it briefly.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = viewModel.autoScrollEnabled,
-                            onCheckedChange = { viewModel.toggleAutoScroll() }
-                        )
-                    }
-
-                    // Focus Mode Toggle (dim non-spoken paragraphs)
-                    Divider()
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column {
                             Text(
                                 text = "Focus Mode",
                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
                             )
                             Text(
-                                text = "Dim the paragraphs that aren't being read",
+                                text = "Keep spoken text in center and auto-scroll",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

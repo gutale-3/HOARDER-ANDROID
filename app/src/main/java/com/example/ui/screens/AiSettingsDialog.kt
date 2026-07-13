@@ -3,7 +3,6 @@ package com.example.ui.screens
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -359,87 +358,85 @@ fun AiSettingsDialog(
                     }
                 }
 
-                // Offline neural voices (Piper / sherpa-onnx)
+                // Premium Offline Voice (Piper TTS)
                 Divider()
-
-                LaunchedEffect(Unit) { viewModel.refreshInstalledPiperVoices() }
 
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "Offline Neural Voices (Piper)",
+                        text = "Premium Offline Voice (Piper TTS)",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "Download deeply natural 'Audible-style' narrators that run 100% offline. Pick any voice below, then select it from the player's voice menu.",
+                        text = "Switch to a premium, deeply natural 'Audible-style' narrator that runs 100% offline. Download the lightweight open-source Piper TTS model (~25MB) to enable it.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    viewModel.piperDownloadError?.let { err ->
-                        Text(
-                            text = err,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
+                    Spacer(modifier = Modifier.height(4.dp))
 
-                    viewModel.piperCatalog.forEach { voice ->
-                        val installed = viewModel.isPiperVoiceInstalled(voice)
-                        val downloading = viewModel.downloadingPiperId == voice.id
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                                    RoundedCornerShape(10.dp)
-                                )
-                                .padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                    if (viewModel.premiumVoiceDownloaded) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                            Text(
+                                text = "ljspeech-medium.onnx loaded (Active)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Button(
+                                onClick = {
+                                    viewModel.deletePremiumVoice()
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.error
+                                ),
+                                shape = RoundedCornerShape(8.dp)
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = voice.displayName,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = "${voice.language} • ${voice.quality} • ~${voice.approxSizeMb} MB",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                when {
-                                    installed -> IconButton(onClick = { viewModel.deletePiperVoice(voice) }) {
-                                        Icon(
-                                            Icons.Default.Delete,
-                                            contentDescription = "Delete",
-                                            tint = MaterialTheme.colorScheme.error
-                                        )
-                                    }
-                                    downloading -> CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                                    else -> IconButton(
-                                        onClick = { viewModel.downloadPiperVoice(voice) },
-                                        enabled = viewModel.downloadingPiperId == null
-                                    ) {
-                                        Icon(Icons.Default.Download, contentDescription = "Download")
-                                    }
-                                }
+                                Icon(Icons.Default.Delete, contentDescription = "Delete Voice")
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Delete")
                             }
-                            if (downloading) {
-                                LinearProgressIndicator(
-                                    progress = viewModel.piperDownloadProgress / 100f,
-                                    modifier = Modifier.fillMaxWidth()
+                        }
+                    } else if (viewModel.premiumVoiceDownloading) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = "Downloading Voice Model: ${viewModel.premiumVoiceDownloadProgress}%",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            LinearProgressIndicator(
+                                progress = viewModel.premiumVoiceDownloadProgress / 100f,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    } else {
+                        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            if (viewModel.premiumVoiceDownloadError != null) {
+                                Text(
+                                    text = viewModel.premiumVoiceDownloadError ?: "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
                                 )
+                            }
+                            Button(
+                                onClick = {
+                                    viewModel.downloadPremiumVoice()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.Download, contentDescription = "Download Voice")
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Download Premium Voice (25 MB)")
                             }
                         }
                     }

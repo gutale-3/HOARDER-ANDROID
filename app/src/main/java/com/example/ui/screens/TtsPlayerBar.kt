@@ -22,7 +22,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.viewmodel.MainViewModel
-import com.example.viewmodel.VoiceEngine
 import com.example.viewmodel.VoiceOption
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -94,7 +93,6 @@ fun TtsPlayerBar(
     }
 
     var showSettingsDialog by remember { mutableStateOf(false) }
-    var showVoiceSheet by remember { mutableStateOf(false) }
 
     Card(
         modifier = modifier
@@ -423,23 +421,234 @@ fun TtsPlayerBar(
 
                     Divider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                    // 3. Voice choice -> opens the full-height bottom-sheet picker
-                    val selectedVoice = viewModel.ttsVoices.find { it.id == viewModel.selectedVoiceId }
-                    OutlinedButton(
-                        onClick = { showVoiceSheet = true },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("open_voice_sheet_btn"),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Icon(Icons.Default.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = selectedVoice?.name ?: "Choose Voice (${viewModel.ttsVoices.size})",
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                    // 3. Voice choices
+                    Text(
+                        text = "Voice Choice (${viewModel.ttsVoices.size} options)",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+
+                    if (viewModel.ttsVoices.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(100.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Initializing voices list...", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            contentPadding = PaddingValues(6.dp)
+                        ) {
+                            items(viewModel.ttsVoices) { voice ->
+                                val isSelected = voice.id == viewModel.selectedVoiceId
+                                if (voice.id == "premium_piper") {
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .clickable {
+                                                if (viewModel.premiumVoiceDownloaded) {
+                                                    viewModel.setTtsVoice(voice)
+                                                }
+                                            },
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (isSelected) {
+                                                MaterialTheme.colorScheme.primaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                            }
+                                        ),
+                                        border = BorderStroke(
+                                            width = 1.5.dp,
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
+                                        )
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(12.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = "Piper TTS (Offline Engine)",
+                                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                                                                else MaterialTheme.colorScheme.onSurface
+                                                            )
+                                                        )
+                                                        Icon(
+                                                            imageVector = Icons.Default.Star,
+                                                            contentDescription = "Premium Voice",
+                                                            tint = MaterialTheme.colorScheme.primary,
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                    }
+                                                    Text(
+                                                        text = if (viewModel.premiumVoiceDownloaded) "Deeply natural voice • 100% Offline" else "Lightweight open-source Piper voice (~25MB)",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                                        else MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                
+                                                if (isSelected && viewModel.premiumVoiceDownloaded) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.CheckCircle,
+                                                        contentDescription = "Selected",
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+                                            }
+
+                                            if (viewModel.premiumVoiceDownloading) {
+                                                Column(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            text = "Downloading: ${viewModel.premiumVoiceDownloadProgress}%",
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                            color = MaterialTheme.colorScheme.primary,
+                                                            fontWeight = FontWeight.SemiBold
+                                                        )
+                                                        CircularProgressIndicator(
+                                                            modifier = Modifier.size(14.dp),
+                                                            strokeWidth = 2.dp,
+                                                            color = MaterialTheme.colorScheme.primary
+                                                        )
+                                                    }
+                                                    LinearProgressIndicator(
+                                                        progress = viewModel.premiumVoiceDownloadProgress / 100f,
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                                                    )
+                                                }
+                                            } else if (!viewModel.premiumVoiceDownloaded) {
+                                                Button(
+                                                    onClick = { viewModel.downloadPremiumVoice() },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = MaterialTheme.colorScheme.primary
+                                                    ),
+                                                    contentPadding = PaddingValues(vertical = 4.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Download,
+                                                        contentDescription = "Download Piper Voice",
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text(
+                                                        text = "Download & Enable Piper Voice",
+                                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                                                    )
+                                                }
+                                            } else {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    if (!isSelected) {
+                                                        TextButton(
+                                                            onClick = { viewModel.setTtsVoice(voice) },
+                                                            contentPadding = PaddingValues(0.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = "Tap to activate",
+                                                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                                                            )
+                                                        }
+                                                    } else {
+                                                        Text(
+                                                            text = "Active Offline Voice",
+                                                            style = MaterialTheme.typography.labelMedium.copy(
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = MaterialTheme.colorScheme.primary
+                                                            )
+                                                        )
+                                                    }
+
+                                                    IconButton(
+                                                        onClick = { viewModel.deletePremiumVoice() },
+                                                        modifier = Modifier.size(32.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Delete,
+                                                            contentDescription = "Delete Piper Voice",
+                                                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(
+                                                if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                                                else Color.Transparent
+                                            )
+                                            .clickable {
+                                                viewModel.setTtsVoice(voice)
+                                            }
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = voice.name,
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                                                else MaterialTheme.colorScheme.onSurface
+                                            ),
+                                            modifier = Modifier.weight(1f),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        if (isSelected) {
+                                            Icon(
+                                                imageVector = Icons.Default.CheckCircle,
+                                                contentDescription = "Selected",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             },
@@ -452,162 +661,5 @@ fun TtsPlayerBar(
                 }
             }
         )
-    }
-
-    if (showVoiceSheet) {
-        VoicePickerSheet(
-            viewModel = viewModel,
-            onDismiss = { showVoiceSheet = false }
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun VoicePickerSheet(
-    viewModel: MainViewModel,
-    onDismiss: () -> Unit
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    LaunchedEffect(Unit) { viewModel.refreshInstalledPiperVoices() }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState
-    ) {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.9f)
-                .padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(bottom = 32.dp)
-        ) {
-            item {
-                Text(
-                    text = "Choose a Voice",
-                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-            }
-
-            // --- Premium Piper (offline neural) voices ---
-            item {
-                Text(
-                    text = "PREMIUM OFFLINE VOICES (PIPER)",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-            viewModel.piperDownloadError?.let { err ->
-                item {
-                    Text(
-                        text = err,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-            items(viewModel.piperCatalog) { voice ->
-                val installed = viewModel.isPiperVoiceInstalled(voice)
-                val downloading = viewModel.downloadingPiperId == voice.id
-                val voiceOptionId = voice.voiceId
-                val isSelected = viewModel.selectedVoiceId == voiceOptionId
-
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .then(
-                            if (installed) Modifier.clickable {
-                                viewModel.ttsVoices.find { it.id == voiceOptionId }
-                                    ?.let { viewModel.setTtsVoice(it) }
-                                onDismiss()
-                            } else Modifier
-                        ),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isSelected)
-                            MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    ),
-                    border = if (isSelected)
-                        BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text(voice.displayName, fontWeight = FontWeight.SemiBold)
-                                    Icon(Icons.Default.Star, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
-                                }
-                                Text(
-                                    text = "${voice.language} • ${voice.quality} • ~${voice.approxSizeMb} MB",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            when {
-                                isSelected -> Icon(Icons.Default.CheckCircle, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
-                                installed -> IconButton(onClick = { viewModel.deletePiperVoice(voice) }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
-                                }
-                                downloading -> CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                                else -> IconButton(
-                                    onClick = { viewModel.downloadPiperVoice(voice) },
-                                    enabled = viewModel.downloadingPiperId == null
-                                ) {
-                                    Icon(Icons.Default.Download, contentDescription = "Download")
-                                }
-                            }
-                        }
-                        if (downloading) {
-                            LinearProgressIndicator(
-                                progress = viewModel.piperDownloadProgress / 100f,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    }
-                }
-            }
-
-            // --- System voices ---
-            item {
-                Text(
-                    text = "SYSTEM VOICES",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(top = 16.dp)
-                )
-            }
-            items(viewModel.ttsVoices.filter { it.engine == VoiceEngine.SYSTEM }) { voice ->
-                val isSelected = voice.id == viewModel.selectedVoiceId
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-                        .clickable { viewModel.setTtsVoice(voice); onDismiss() }
-                        .padding(horizontal = 14.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = voice.name,
-                        modifier = Modifier.weight(1f),
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (isSelected) {
-                        Icon(Icons.Default.CheckCircle, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                    }
-                }
-            }
-        }
     }
 }

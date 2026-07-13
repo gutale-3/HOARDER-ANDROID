@@ -116,12 +116,6 @@ dependencies {
   implementation(libs.retrofit)
   implementation(libs.mediapipe.tasks.genai)
   implementation(libs.onnxruntime.android)
-  // Tar/BZip2 extraction for downloaded Piper voice models (.tar.bz2)
-  implementation(libs.commons.compress)
-  // Offline neural TTS (sherpa-onnx / Piper). Drop the prebuilt sherpa-onnx
-  // Android AAR into app/libs/ to enable it — see app/libs/README-sherpa.md.
-  // If no AAR is present the app compiles and falls back to system TTS.
-  implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
