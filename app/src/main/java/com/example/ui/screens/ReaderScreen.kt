@@ -45,7 +45,11 @@ fun ReaderScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
     var currentChapterId by remember { mutableStateOf("") }
-    var selectedFontFamily by remember { mutableStateOf(FontFamily.Serif) }
+    val selectedFontFamily = when (viewModel.readerFontFamily) {
+        "sans" -> FontFamily.SansSerif
+        "mono" -> FontFamily.Monospace
+        else -> FontFamily.Serif
+    }
 
     // Settings panel toggles
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -386,140 +390,167 @@ fun ReaderScreen(
                     }
                 } else {
                     // Actual reading canvas (scrollable with generous line spacing and custom font size!)
-                    val scrollState = rememberScrollState()
+                    val lazyListState = rememberLazyListState()
 
                     // Reset scroll state on chapter change
                     LaunchedEffect(currentChapterId) {
-                        scrollState.scrollTo(0)
+                        lazyListState.scrollToItem(0)
                     }
 
-                    Column(
+                    // Auto-scroll when active paragraph changes in Focus Mode
+                    val activePara = viewModel.ttsActiveParagraphIndex ?: -1
+                    LaunchedEffect(activePara, viewModel.focusModeEnabled) {
+                        if (viewModel.focusModeEnabled && activePara >= 0) {
+                            // Paragraph index `activePara` corresponds to item index `activePara + 3`
+                            lazyListState.animateScrollToItem(activePara + 3)
+                        }
+                    }
+
+                    val chapterTextToRender = if (polishedChapter != null && readPolishedTranslation) {
+                        polishedChapter!!.content
+                    } else {
+                        activeChapter.content
+                    }
+                    val paragraphs = remember(chapterTextToRender) {
+                        chapterTextToRender.split("\n").filter { it.trim().isNotEmpty() }
+                    }
+
+                    // Expose total paragraphs to viewmodel for TTS player bar seek slider
+                    LaunchedEffect(paragraphs.size) {
+                        viewModel.ttsTotalParagraphs = paragraphs.size
+                    }
+
+                    LazyColumn(
+                        state = lazyListState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .verticalScroll(scrollState)
-                            .padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                            .padding(horizontal = 20.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        contentPadding = PaddingValues(top = 20.dp, bottom = 80.dp)
                     ) {
-                        Text(
-                            text = activeChapter.title,
-                            style = MaterialTheme.typography.headlineMedium.copy(
-                                fontWeight = FontWeight.Black,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontFamily = selectedFontFamily
-                            ),
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
+                        // Title
+                        item {
+                            Text(
+                                text = activeChapter.title,
+                                style = MaterialTheme.typography.headlineMedium.copy(
+                                    fontWeight = FontWeight.Black,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontFamily = selectedFontFamily
+                                ),
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                        }
 
                         // AI Reading Toolbar
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val isPolishing = polishedChaptersLoading[activeChapter.id] == true
-                            
-                            if (polishedChapter != null) {
-                                FilterChip(
-                                    selected = readPolishedTranslation,
-                                    onClick = { readPolishedTranslation = !readPolishedTranslation },
-                                    label = { Text("✨ AI Polished") },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Default.AutoAwesome,
-                                            contentDescription = "Polished",
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.testTag("ai_toggle_polished")
-                                )
-                            } else {
-                                Button(
-                                    onClick = { viewModel.polishChapter(activeChapter) },
-                                    enabled = !isPolishing,
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                    ),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                    modifier = Modifier.height(32.dp).testTag("ai_polish_button")
-                                ) {
-                                    if (isPolishing) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(14.dp),
-                                            strokeWidth = 2.dp,
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                                        )
-                                    } else {
-                                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(14.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("AI Polish", fontSize = 11.sp)
+                        item {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val isPolishing = polishedChaptersLoading[activeChapter.id] == true
+                                
+                                if (polishedChapter != null) {
+                                    FilterChip(
+                                        selected = readPolishedTranslation,
+                                        onClick = { readPolishedTranslation = !readPolishedTranslation },
+                                        label = { Text("✨ AI Polished") },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.AutoAwesome,
+                                                contentDescription = "Polished",
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.testTag("ai_toggle_polished")
+                                    )
+                                } else {
+                                    Button(
+                                        onClick = { viewModel.polishChapter(activeChapter) },
+                                        enabled = !isPolishing,
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                        modifier = Modifier.height(32.dp).testTag("ai_polish_button")
+                                    ) {
+                                        if (isPolishing) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(14.dp),
+                                                strokeWidth = 2.dp,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        } else {
+                                            Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("AI Polish", fontSize = 11.sp)
+                                        }
                                     }
                                 }
-                            }
 
-                            // Summary / Recap button
-                            Button(
-                                onClick = { showRecapDialog = true },
-                                shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                ),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                modifier = Modifier.height(32.dp).testTag("ai_recap_button")
-                            ) {
-                                Icon(Icons.Default.Summarize, contentDescription = null, modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Recap", fontSize = 11.sp)
-                            }
+                                // Summary / Recap button
+                                Button(
+                                    onClick = { showRecapDialog = true },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(32.dp).testTag("ai_recap_button")
+                                ) {
+                                    Icon(Icons.Default.Summarize, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Recap", fontSize = 11.sp)
+                                }
 
-                            // Ask AI button
-                            Button(
-                                onClick = { showAskAiDialog = true },
-                                shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer
-                                ),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                modifier = Modifier.height(32.dp).testTag("ai_ask_button")
-                            ) {
-                                Icon(Icons.Default.Forum, contentDescription = null, modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Ask AI", fontSize = 11.sp)
-                            }
+                                // Ask AI button
+                                Button(
+                                    onClick = { showAskAiDialog = true },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(32.dp).testTag("ai_ask_button")
+                                ) {
+                                    Icon(Icons.Default.Forum, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Ask AI", fontSize = 11.sp)
+                                }
 
-                            // Find & Replace
-                            IconButton(
-                                onClick = { showFindReplaceDialog = true },
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
-                                    .testTag("bulk_replace_icon_btn")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.SwapHoriz,
-                                    contentDescription = "Find & Replace",
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                // Find & Replace
+                                IconButton(
+                                    onClick = { showFindReplaceDialog = true },
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                                        .testTag("bulk_replace_icon_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.SwapHoriz,
+                                        contentDescription = "Find & Replace",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
 
-                        Divider()
-
-                        val chapterTextToRender = if (polishedChapter != null && readPolishedTranslation) {
-                            polishedChapter!!.content
-                        } else {
-                            activeChapter.content
+                        // Divider
+                        item {
+                            Divider()
                         }
 
-                        val paragraphs = chapterTextToRender.split("\n").filter { it.trim().isNotEmpty() }
-                        paragraphs.forEachIndexed { idx, para ->
+                        // Paragraphs
+                        items(paragraphs.size) { idx ->
+                            val para = paragraphs[idx]
                             val isReadingThisPara = viewModel.ttsIsPlaying &&
                                     viewModel.ttsPlayingBook?.id == bookState?.id &&
                                     viewModel.ttsPlayingChapter?.id == activeChapter.id &&
@@ -545,20 +576,26 @@ fun ReaderScreen(
                                 MaterialTheme.colorScheme.onBackground
                             }
 
+                            val paragraphAlpha = if (viewModel.focusModeEnabled && viewModel.ttsIsPlaying &&
+                                    viewModel.ttsPlayingBook?.id == bookState?.id &&
+                                    viewModel.ttsPlayingChapter?.id == activeChapter.id) {
+                                if (isReadingThisPara) 1.0f else 0.35f
+                            } else {
+                                1.0f
+                            }
+
                             Text(
                                 text = "      " + para.trim(),
                                 style = MaterialTheme.typography.bodyLarge.copy(
                                     fontSize = viewModel.readerFontSize.sp,
                                     lineHeight = (viewModel.readerFontSize * 1.6).sp,
                                     fontFamily = selectedFontFamily,
-                                    color = textColor,
+                                    color = textColor.copy(alpha = paragraphAlpha),
                                     fontWeight = if (isReadingThisPara) FontWeight.Bold else FontWeight.Normal
                                 ),
                                 modifier = textAndStyleModifier
                             )
                         }
-
-                        Spacer(modifier = Modifier.height(48.dp))
                     }
                 }
             }
@@ -623,20 +660,44 @@ fun ReaderScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             listOf(
-                                Pair("Serif", FontFamily.Serif),
-                                Pair("Sans", FontFamily.SansSerif),
-                                Pair("Mono", FontFamily.Monospace)
-                            ).forEach { (name, font) ->
-                                val selected = selectedFontFamily == font
+                                Pair("Serif", "serif"),
+                                Pair("Sans", "sans"),
+                                Pair("Mono", "mono")
+                            ).forEach { (name, fontKey) ->
+                                val selected = viewModel.readerFontFamily == fontKey
                                 FilterChip(
                                     selected = selected,
-                                    onClick = { selectedFontFamily = font },
+                                    onClick = { viewModel.updateFontFamily(fontKey) },
                                     label = { Text(name) },
                                     modifier = Modifier.weight(1f),
                                     shape = RoundedCornerShape(8.dp)
                                 )
                             }
                         }
+                    }
+
+                    // Focus Mode Toggle
+                    Divider()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Focus Mode",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Text(
+                                text = "Keep spoken text in center and auto-scroll",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = viewModel.focusModeEnabled,
+                            onCheckedChange = { viewModel.toggleFocusMode() }
+                        )
                     }
                 }
             },

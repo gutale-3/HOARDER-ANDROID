@@ -37,10 +37,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // --- Global Theme & Preferences ---
     private val prefs = application.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
 
+    var focusModeEnabled by mutableStateOf(false)
+    var ttsTotalParagraphs by mutableStateOf(0)
+
+    // Resumable session state
+    var hasResumableSession by mutableStateOf(false)
+        private set
+    var resumeBookId by mutableStateOf("")
+        private set
+    var resumeChapterId by mutableStateOf("")
+        private set
+    var resumeParagraph by mutableStateOf(0)
+        private set
+    var resumeBookName by mutableStateOf("")
+        private set
+    var resumeChapterTitle by mutableStateOf("")
+        private set
+
     var currentTheme by mutableStateOf(AppTheme.IMMERSIVE_UI)
         private set
 
     var readerFontSize by mutableStateOf(16)
+        private set
+
+    var readerFontFamily by mutableStateOf("serif")
         private set
 
     var defaultUserAgent by mutableStateOf("")
@@ -60,10 +80,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val themeName = prefs.getString("selected_theme", AppTheme.IMMERSIVE_UI.name)
         currentTheme = AppTheme.valueOf(themeName ?: AppTheme.IMMERSIVE_UI.name)
         readerFontSize = prefs.getInt("reader_font_size", 18)
+        readerFontFamily = prefs.getString("reader_font_family", "serif") ?: "serif"
         defaultUserAgent = prefs.getString("user_agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36") ?: ""
         activeAiProviderId = prefs.getString("active_ai_provider", "gemini_cloud") ?: "gemini_cloud"
         userGeminiApiKey = prefs.getString("gemini_api_key", "") ?: ""
+        focusModeEnabled = prefs.getBoolean("focus_mode", false)
         registerTtsReceiver()
+        loadResumableTtsSession()
     }
 
     fun updateGeminiApiKey(key: String) {
@@ -84,6 +107,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateFontSize(size: Int) {
         readerFontSize = size.coerceIn(12, 36)
         prefs.edit().putInt("reader_font_size", readerFontSize).apply()
+    }
+
+    fun updateFontFamily(family: String) {
+        readerFontFamily = family
+        prefs.edit().putString("reader_font_family", family).apply()
     }
 
     // --- Stats state ---
@@ -842,6 +870,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         resumeTts()
                     }
                 }
+                "com.example.ACTION_PREV_CHAPTER" -> {
+                    playPreviousChapterTts()
+                }
                 "com.example.ACTION_NEXT_CHAPTER" -> {
                     playNextChapterTts()
                 }
@@ -907,6 +938,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             context, 1, playPauseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val prevIntent = Intent("com.example.ACTION_PREV_CHAPTER").apply {
+            `package` = context.packageName
+        }
+        val prevPendingIntent = PendingIntent.getBroadcast(
+            context, 4, prevIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val nextIntent = Intent("com.example.ACTION_NEXT_CHAPTER").apply {
             `package` = context.packageName
         }
@@ -936,6 +974,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .setContentText(chapter.title)
             .setOngoing(ttsIsPlaying)
             .setContentIntent(openAppPendingIntent)
+            .addAction(android.R.drawable.ic_media_previous, "Prev Chapter", prevPendingIntent)
             .addAction(playPauseIcon, playPauseText, playPausePendingIntent)
             .addAction(android.R.drawable.ic_media_next, "Next Chapter", nextPendingIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
@@ -954,6 +993,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val context = getApplication<Application>().applicationContext
             val filter = IntentFilter().apply {
                 addAction("com.example.ACTION_PLAY_PAUSE")
+                addAction("com.example.ACTION_PREV_CHAPTER")
                 addAction("com.example.ACTION_NEXT_CHAPTER")
                 addAction("com.example.ACTION_STOP_TTS")
             }
@@ -1114,7 +1154,93 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun saveTtsProgress() {
+        val book = ttsPlayingBook ?: return
+        val chapter = ttsPlayingChapter ?: return
+        val para = ttsActiveParagraphIndex ?: -1
+        prefs.edit()
+            .putString("tts_resume_book_id", book.id)
+            .putString("tts_resume_chapter_id", chapter.id)
+            .putInt("tts_resume_para", para)
+            .putBoolean("tts_was_playing", ttsIsPlaying)
+            .apply()
+    }
+
+    fun clearTtsProgress() {
+        prefs.edit()
+            .remove("tts_resume_book_id")
+            .remove("tts_resume_chapter_id")
+            .remove("tts_resume_para")
+            .remove("tts_was_playing")
+            .apply()
+    }
+
+    fun loadResumableTtsSession() {
+        val bookId = prefs.getString("tts_resume_book_id", "") ?: ""
+        val chapterId = prefs.getString("tts_resume_chapter_id", "") ?: ""
+        val para = prefs.getInt("tts_resume_para", -1)
+        if (bookId.isNotEmpty() && chapterId.isNotEmpty()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val book = repository.getBook(bookId)
+                val chapter = repository.getChapter(chapterId)
+                if (book != null && chapter != null) {
+                    withContext(Dispatchers.Main) {
+                        resumeBookId = bookId
+                        resumeChapterId = chapterId
+                        resumeParagraph = para
+                        resumeBookName = book.title
+                        resumeChapterTitle = chapter.title
+                        hasResumableSession = true
+                    }
+                }
+            }
+        } else {
+            hasResumableSession = false
+        }
+    }
+
+    fun resumeLastSession() {
+        val bookId = prefs.getString("tts_resume_book_id", "") ?: ""
+        val chapterId = prefs.getString("tts_resume_chapter_id", "") ?: ""
+        val para = prefs.getInt("tts_resume_para", -1)
+        if (bookId.isNotEmpty() && chapterId.isNotEmpty()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val book = repository.getBook(bookId)
+                val chapter = repository.getChapter(chapterId)
+                if (book != null && chapter != null) {
+                    withContext(Dispatchers.Main) {
+                        speak(chapter.content, book, chapter, startFromParagraphIndex = para)
+                    }
+                }
+            }
+        }
+    }
+
+    fun seekToParagraph(index: Int) {
+        val book = ttsPlayingBook ?: return
+        val chapter = ttsPlayingChapter ?: return
+        val clampedIndex = index.coerceIn(-1, ttsTotalParagraphs - 1)
+        speak(chapter.content, book, chapter, startFromParagraphIndex = clampedIndex)
+    }
+
+    fun skipParagraph(delta: Int) {
+        val current = ttsActiveParagraphIndex ?: -1
+        val next = current + delta
+        seekToParagraph(next)
+    }
+
+    fun toggleFocusMode() {
+        focusModeEnabled = !focusModeEnabled
+        prefs.edit().putBoolean("focus_mode", focusModeEnabled).apply()
+    }
+
     fun speak(text: String, book: BookEntity, chapter: ChapterEntity, startFromParagraphIndex: Int = -1) {
+        // Save chapter progress
+        viewModelScope.launch(Dispatchers.IO) {
+            val updatedBook = book.copy(lastReadChapterId = chapter.id)
+            repository.updateBook(updatedBook)
+        }
+
         if (selectedVoiceId == "premium_piper" && premiumVoiceDownloaded) {
             viewModelScope.launch(Dispatchers.Main) {
                 ttsPlayingBook = book
@@ -1128,6 +1254,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val glossary = repository.getGlossary(book.id)
                 val cleanText = repository.applyGlossary(text, glossary)
                 val rawParagraphs = cleanText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                ttsTotalParagraphs = rawParagraphs.size
 
                 if (startFromParagraphIndex < 0) {
                     ttsActiveParagraphIndex = -1
@@ -1153,6 +1280,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             } else {
                                 premiumIdx - 1
                             }
+                            saveTtsProgress()
+                            loadResumableTtsSession()
                         }
                     },
                     onDone = {
@@ -1183,6 +1312,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Filter out html/extra characters and split to avoid 4000 char limits
                 val rawParagraphs = cleanText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                ttsTotalParagraphs = rawParagraphs.size
                 
                 tts?.stop()
 
@@ -1211,11 +1341,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 if (idx != null) {
                                     viewModelScope.launch(Dispatchers.Main) {
                                         ttsActiveParagraphIndex = idx
+                                        saveTtsProgress()
+                                        loadResumableTtsSession()
                                     }
                                 }
                             } else if (utteranceId.startsWith("title_")) {
                                 viewModelScope.launch(Dispatchers.Main) {
                                     ttsActiveParagraphIndex = -1
+                                    saveTtsProgress()
+                                    loadResumableTtsSession()
                                 }
                             }
                         }
@@ -1256,6 +1390,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun playPreviousChapterTts() {
+        val book = ttsPlayingBook ?: return
+        val currentChapter = ttsPlayingChapter ?: return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val chapters = repository.getChapters(book.id)
+            val currentIdx = chapters.indexOfFirst { it.id == currentChapter.id }
+            if (currentIdx > 0) {
+                val prevChapter = chapters[currentIdx - 1]
+                withContext(Dispatchers.Main) {
+                    speak(prevChapter.content, book, prevChapter)
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    speak(currentChapter.content, book, currentChapter, startFromParagraphIndex = -1)
+                }
+            }
+        }
+    }
+
     fun pauseTts() {
         if (ttsIsPlaying) {
             if (selectedVoiceId == "premium_piper") {
@@ -1266,6 +1420,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ttsIsPlaying = false
             ttsIsPaused = true
             showTtsNotification()
+            saveTtsProgress()
+            loadResumableTtsSession()
         }
     }
 
@@ -1287,6 +1443,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ttsIsPaused = false
         ttsActiveParagraphIndex = -1
         dismissTtsNotification()
+        clearTtsProgress()
+        hasResumableSession = false
     }
 
     private fun downloadCoverAndSaveMetadata(book: BookEntity, cookies: String): BookEntity {
