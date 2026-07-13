@@ -44,6 +44,7 @@ googleid = "1.1.1"
 jsoup = "1.18.1"
 mediapipeTasksGenai = "0.10.14"
 onnxruntime = "1.16.0"
+commonsCompress = "1.26.2"
 
 
 [libraries]
@@ -103,6 +104,7 @@ googleid = { group = "com.google.android.libraries.identity.googleid", name = "g
 jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
 mediapipe-tasks-genai = { group = "com.google.mediapipe", name = "tasks-genai", version.ref = "mediapipeTasksGenai" }
 onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntime" }
+commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
 
 
 [plugins]
