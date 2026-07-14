@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -90,12 +91,30 @@ fun ReaderScreen(
     // Active Chapter object
     val activeChapter = chapters.find { it.id == currentChapterId } ?: chapters.firstOrNull()
 
-    // Whenever active chapter changes, save reading progress in database
+    // Whenever active chapter changes, save reading progress in database and prefetch next chapters
     LaunchedEffect(activeChapter) {
         if (activeChapter != null && bookState != null) {
             viewModel.repository.updateBook(bookState!!.copy(lastReadChapterId = activeChapter.id))
+            viewModel.triggerAutoDownloadNextChapters(bookState!!, activeChapter)
         }
     }
+
+    // Keep UI chapter in sync with TTS playing chapter
+    LaunchedEffect(viewModel.ttsPlayingChapter) {
+        if (viewModel.ttsPlayingBook?.id == bookId) {
+            val ttsChId = viewModel.ttsPlayingChapter?.id
+            if (!ttsChId.isNullOrEmpty() && ttsChId != currentChapterId) {
+                currentChapterId = ttsChId
+            }
+        }
+    }
+
+    var drawerTabSelected by remember { mutableStateOf(0) } // 0 = Chapters, 1 = Bookmarks
+    var showBookmarkDialog by remember { mutableStateOf(false) }
+    var selectedParaIndexForBookmark by remember { mutableStateOf<Int?>(null) }
+    var selectedParaTextForBookmark by remember { mutableStateOf("") }
+    var bookmarkNoteText by remember { mutableStateOf("") }
+    val bookmarks by viewModel.repository.getBookmarksFlow(bookId).collectAsState(emptyList())
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -105,185 +124,312 @@ fun ReaderScreen(
             ) {
                 Spacer(modifier = Modifier.height(12.dp))
                 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                TabRow(
+                    selectedTabIndex = drawerTabSelected,
+                    containerColor = Color.Transparent,
+                    contentColor = MaterialTheme.colorScheme.primary
                 ) {
-                    Text(
-                        text = if (isMultiSelectMode) "Selected (${selectedChapters.size})" else "Chapters",
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                    Tab(
+                        selected = drawerTabSelected == 0,
+                        onClick = { drawerTabSelected = 0 },
+                        text = { Text("Chapters", fontWeight = FontWeight.Bold) }
                     )
-                    
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (isMultiSelectMode) {
-                            IconButton(onClick = {
-                                if (selectedChapters.size == chapters.size) {
-                                    selectedChapters = emptySet()
-                                } else {
-                                    selectedChapters = chapters.map { it.id }.toSet()
+                    Tab(
+                        selected = drawerTabSelected == 1,
+                        onClick = { drawerTabSelected = 1 },
+                        text = { Text("Bookmarks", fontWeight = FontWeight.Bold) }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (drawerTabSelected == 1) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        if (bookmarks.isEmpty()) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(32.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "No saved bookmarks or highlights in this book yet.\nTap any paragraph to save highlights with thoughts!",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    )
                                 }
-                            }) {
-                                Icon(
-                                    imageVector = if (selectedChapters.size == chapters.size) Icons.Default.SelectAll else Icons.Default.Checklist,
-                                    contentDescription = "Select All"
-                                )
-                            }
-                            IconButton(onClick = {
-                                isMultiSelectMode = false
-                                selectedChapters = emptySet()
-                            }) {
-                                Icon(imageVector = Icons.Default.Close, contentDescription = "Cancel Multi-select")
                             }
                         } else {
-                            IconButton(onClick = {
-                                isMultiSelectMode = true
-                                selectedChapters = emptySet()
-                            }) {
-                                Icon(imageVector = Icons.Default.EditCalendar, contentDescription = "Enable Multi-select")
-                            }
-                        }
-                    }
-                }
-                
-                if (isMultiSelectMode && selectedChapters.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp)
-                            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-                            .padding(8.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(
-                            onClick = {
-                                viewModel.updateChaptersReadStatus(selectedChapters.toList(), true)
-                                isMultiSelectMode = false
-                                selectedChapters = emptySet()
-                            }
-                        ) {
-                            Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Mark Read", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        }
-                        
-                        Divider(modifier = Modifier.height(20.dp).width(1.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.3f))
-                        
-                        TextButton(
-                            onClick = {
-                                viewModel.updateChaptersReadStatus(selectedChapters.toList(), false)
-                                isMultiSelectMode = false
-                                selectedChapters = emptySet()
-                            }
-                        ) {
-                            Icon(imageVector = Icons.Default.RemoveDone, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Mark Unread", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        }
-                    }
-                }
-                
-                Divider()
-
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 24.dp)
-                ) {
-                    items(chapters) { ch ->
-                        val isCurrent = ch.id == currentChapterId
-                        val isSelected = selectedChapters.contains(ch.id)
-                        NavigationDrawerItem(
-                            label = {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.fillMaxWidth()
+                            items(bookmarks) { b ->
+                                val chName = chapters.find { it.id == b.chapterId }?.title ?: "Unknown Chapter"
+                                Card(
+                                    onClick = {
+                                        scope.launch {
+                                            currentChapterId = b.chapterId
+                                            drawerState.close()
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.2f)
+                                    ),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.3f))
                                 ) {
-                                    if (isMultiSelectMode) {
-                                        Checkbox(
-                                            checked = isSelected,
-                                            onCheckedChange = { checked ->
-                                                selectedChapters = if (checked) {
-                                                    selectedChapters + ch.id
-                                                } else {
-                                                    selectedChapters - ch.id
-                                                }
-                                            },
-                                            colors = CheckboxDefaults.colors(
-                                                checkedColor = MaterialTheme.colorScheme.primary
+                                    Column(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = chName,
+                                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                                color = MaterialTheme.colorScheme.tertiary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f)
                                             )
-                                        )
-                                    } else {
-                                        // Visual indicators for Read / Unread in standard view
-                                        Icon(
-                                            imageVector = if (ch.isRead) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
-                                            contentDescription = if (ch.isRead) "Read" else "Unread",
-                                            tint = if (ch.isRead) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) 
-                                                   else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                                            modifier = Modifier.size(20.dp).clickable {
-                                                viewModel.updateChaptersReadStatus(listOf(ch.id), !ch.isRead)
-                                            }
-                                        )
-                                    }
-                                    
-                                    Text(
-                                        text = ch.title,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (isCurrent) MaterialTheme.colorScheme.primary 
-                                                else if (ch.isRead) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                                else MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.weight(1f)
-                                    )
-
-                                    if (!isMultiSelectMode) {
-                                        if (viewModel.rescrapingChapterId == ch.id) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(20.dp),
-                                                strokeWidth = 2.dp,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        } else {
                                             IconButton(
                                                 onClick = {
-                                                    viewModel.rescrapeSingleChapter(ch) { success, msg ->
-                                                        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                                    scope.launch {
+                                                        viewModel.repository.deleteBookmark(b.id)
                                                     }
                                                 },
                                                 modifier = Modifier.size(24.dp)
                                             ) {
                                                 Icon(
-                                                    imageVector = Icons.Default.Refresh,
-                                                    contentDescription = "Rescrape Chapter",
+                                                    imageVector = Icons.Default.Delete,
+                                                    contentDescription = "Delete Bookmark",
                                                     modifier = Modifier.size(16.dp),
-                                                    tint = MaterialTheme.colorScheme.primary
+                                                    tint = MaterialTheme.colorScheme.error
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = b.text,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        if (b.note.isNotEmpty()) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                                                    .padding(6.dp),
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                verticalAlignment = Alignment.Top
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Note,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(14.dp).padding(top = 2.dp),
+                                                    tint = MaterialTheme.colorScheme.secondary
+                                                )
+                                                Text(
+                                                    text = b.note,
+                                                    style = MaterialTheme.typography.bodySmall.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
+                                                    color = MaterialTheme.colorScheme.onSurface
                                                 )
                                             }
                                         }
                                     }
                                 }
-                            },
-                            selected = !isMultiSelectMode && isCurrent,
-                            onClick = {
-                                if (isMultiSelectMode) {
-                                    selectedChapters = if (isSelected) {
-                                        selectedChapters - ch.id
-                                    } else {
-                                        selectedChapters + ch.id
-                                    }
-                                } else {
-                                    scope.launch {
-                                        currentChapterId = ch.id
-                                        drawerState.close()
-                                    }
-                                }
-                            },
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                            }
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isMultiSelectMode) "Selected (${selectedChapters.size})" else "Chapters",
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                         )
+                        
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            if (isMultiSelectMode) {
+                                IconButton(onClick = {
+                                    if (selectedChapters.size == chapters.size) {
+                                        selectedChapters = emptySet()
+                                    } else {
+                                        selectedChapters = chapters.map { it.id }.toSet()
+                                    }
+                                }) {
+                                    Icon(
+                                        imageVector = if (selectedChapters.size == chapters.size) Icons.Default.SelectAll else Icons.Default.Checklist,
+                                        contentDescription = "Select All"
+                                    )
+                                }
+                                IconButton(onClick = {
+                                    isMultiSelectMode = false
+                                    selectedChapters = emptySet()
+                                }) {
+                                    Icon(imageVector = Icons.Default.Close, contentDescription = "Cancel Multi-select")
+                                }
+                            } else {
+                                IconButton(onClick = {
+                                    isMultiSelectMode = true
+                                    selectedChapters = emptySet()
+                                }) {
+                                    Icon(imageVector = Icons.Default.EditCalendar, contentDescription = "Enable Multi-select")
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (isMultiSelectMode && selectedChapters.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                                .padding(8.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    viewModel.updateChaptersReadStatus(selectedChapters.toList(), true)
+                                    isMultiSelectMode = false
+                                    selectedChapters = emptySet()
+                                }
+                            ) {
+                                Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Mark Read", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+                            
+                            Divider(modifier = Modifier.height(20.dp).width(1.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.3f))
+                            
+                            TextButton(
+                                onClick = {
+                                    viewModel.updateChaptersReadStatus(selectedChapters.toList(), false)
+                                    isMultiSelectMode = false
+                                    selectedChapters = emptySet()
+                                }
+                            ) {
+                                Icon(imageVector = Icons.Default.RemoveDone, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Mark Unread", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                    
+                    Divider()
+
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(bottom = 24.dp)
+                    ) {
+                        items(chapters) { ch ->
+                            val isCurrent = ch.id == currentChapterId
+                            val isSelected = selectedChapters.contains(ch.id)
+                            NavigationDrawerItem(
+                                label = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        if (isMultiSelectMode) {
+                                            Checkbox(
+                                                checked = isSelected,
+                                                onCheckedChange = { checked ->
+                                                    selectedChapters = if (checked) {
+                                                        selectedChapters + ch.id
+                                                    } else {
+                                                        selectedChapters - ch.id
+                                                    }
+                                                },
+                                                colors = CheckboxDefaults.colors(
+                                                    checkedColor = MaterialTheme.colorScheme.primary
+                                                )
+                                            )
+                                        } else {
+                                            // Visual indicators for Read / Unread in standard view
+                                            Icon(
+                                                imageVector = if (ch.isRead) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                                                contentDescription = if (ch.isRead) "Read" else "Unread",
+                                                tint = if (ch.isRead) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) 
+                                                       else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                                modifier = Modifier.size(20.dp).clickable {
+                                                    viewModel.updateChaptersReadStatus(listOf(ch.id), !ch.isRead)
+                                                }
+                                            )
+                                        }
+                                        
+                                        Text(
+                                            text = ch.title,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isCurrent) MaterialTheme.colorScheme.primary 
+                                                    else if (ch.isRead) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                                    else MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.weight(1f)
+                                        )
+
+                                        if (!isMultiSelectMode) {
+                                            if (viewModel.rescrapingChapterId == ch.id) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(20.dp),
+                                                    strokeWidth = 2.dp,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            } else {
+                                                IconButton(
+                                                    onClick = {
+                                                        viewModel.rescrapeSingleChapter(ch) { success, msg ->
+                                                            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    },
+                                                    modifier = Modifier.size(24.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Refresh,
+                                                        contentDescription = "Rescrape Chapter",
+                                                        modifier = Modifier.size(16.dp),
+                                                        tint = MaterialTheme.colorScheme.primary
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                selected = !isMultiSelectMode && isCurrent,
+                                onClick = {
+                                    if (isMultiSelectMode) {
+                                        selectedChapters = if (isSelected) {
+                                            selectedChapters - ch.id
+                                        } else {
+                                            selectedChapters + ch.id
+                                        }
+                                    } else {
+                                        scope.launch {
+                                            currentChapterId = ch.id
+                                            drawerState.close()
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -449,8 +595,8 @@ fun ReaderScreen(
                     val isTtsPlaying = viewModel.ttsIsPlaying
                     val playingChapterId = viewModel.ttsPlayingChapter?.id
                     val autoScrollEnabled = viewModel.ttsAutoScrollEnabled
-                    LaunchedEffect(activePara, isTtsPlaying, playingChapterId, autoScrollEnabled) {
-                        if (autoScrollEnabled && isTtsPlaying && playingChapterId == activeChapter.id && activePara >= -1) {
+                    LaunchedEffect(activePara, isTtsPlaying, playingChapterId, autoScrollEnabled, activeChapter?.id) {
+                        if (autoScrollEnabled && isTtsPlaying && playingChapterId == activeChapter?.id && activePara >= -1) {
                             val targetItemIndex = if (activePara < 0) 0 else activePara + 3
                             
                             // Check if the target item is already comfortably visible
@@ -484,7 +630,7 @@ fun ReaderScreen(
                         state = lazyListState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = 20.dp),
+                            .padding(horizontal = viewModel.readerMargin.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                         contentPadding = PaddingValues(top = 20.dp, bottom = 80.dp)
                     ) {
@@ -616,19 +762,25 @@ fun ReaderScreen(
                                     viewModel.ttsPlayingChapter?.id == activeChapter.id &&
                                     idx == viewModel.ttsActiveParagraphIndex
 
-                            val textAndStyleModifier = if (isReadingThisPara) {
-                                Modifier
-                                    .fillMaxWidth()
-                                    .background(
-                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                                        shape = RoundedCornerShape(4.dp)
-                                    )
-                                    .padding(vertical = 4.dp, horizontal = 8.dp)
-                            } else {
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp, horizontal = 8.dp)
-                            }
+                            val hasExistingBookmark = bookmarks.find { it.chapterId == currentChapterId && it.paragraphIndex == idx }
+
+                            val textAndStyleModifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    color = when {
+                                        isReadingThisPara -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                        hasExistingBookmark != null -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
+                                        else -> Color.Transparent
+                                    },
+                                    shape = RoundedCornerShape(4.dp)
+                                )
+                                .clickable {
+                                    selectedParaIndexForBookmark = idx
+                                    selectedParaTextForBookmark = para
+                                    bookmarkNoteText = hasExistingBookmark?.note ?: ""
+                                    showBookmarkDialog = true
+                                }
+                                .padding(vertical = 4.dp, horizontal = 8.dp)
 
                             val textColor = if (isReadingThisPara) {
                                 MaterialTheme.colorScheme.primary
@@ -648,7 +800,7 @@ fun ReaderScreen(
                                 text = "      " + para.trim(),
                                 style = MaterialTheme.typography.bodyLarge.copy(
                                     fontSize = viewModel.readerFontSize.sp,
-                                    lineHeight = (viewModel.readerFontSize * 1.6).sp,
+                                    lineHeight = (viewModel.readerFontSize * viewModel.readerLineHeight).sp,
                                     fontFamily = selectedFontFamily,
                                     color = textColor.copy(alpha = paragraphAlpha),
                                     fontWeight = if (isReadingThisPara) FontWeight.Bold else FontWeight.Normal
@@ -814,6 +966,89 @@ fun ReaderScreen(
             bookId = bookId,
             viewModel = viewModel,
             onDismiss = { showFindReplaceDialog = false }
+        )
+    }
+
+    if (showBookmarkDialog && selectedParaIndexForBookmark != null) {
+        val existingBookmark = bookmarks.find { it.chapterId == currentChapterId && it.paragraphIndex == selectedParaIndexForBookmark }
+        AlertDialog(
+            onDismissRequest = { showBookmarkDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(
+                        imageVector = if (existingBookmark != null) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                        contentDescription = "Bookmark",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(if (existingBookmark != null) "Edit Bookmark" else "Add Bookmark / Highlight", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = selectedParaTextForBookmark,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                            .padding(8.dp)
+                    )
+                    
+                    OutlinedTextField(
+                        value = bookmarkNoteText,
+                        onValueChange = { bookmarkNoteText = it },
+                        label = { Text("Add Personal Note / Thought") },
+                        placeholder = { Text("Write your thoughts or highlight context here...") },
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 3,
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            val bId = "${bookId}_${currentChapterId}_${selectedParaIndexForBookmark!!}"
+                            val newBookmark = com.example.data.local.BookmarkEntity(
+                                id = bId,
+                                bookId = bookId,
+                                chapterId = currentChapterId,
+                                paragraphIndex = selectedParaIndexForBookmark!!,
+                                text = selectedParaTextForBookmark,
+                                note = bookmarkNoteText
+                            )
+                            viewModel.repository.insertBookmark(newBookmark)
+                            showBookmarkDialog = false
+                        }
+                    },
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Save Bookmark")
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (existingBookmark != null) {
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    viewModel.repository.deleteBookmark(existingBookmark.id)
+                                    showBookmarkDialog = false
+                                }
+                            },
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text("Delete")
+                        }
+                    }
+                    TextButton(onClick = { showBookmarkDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            }
         )
     }
 }

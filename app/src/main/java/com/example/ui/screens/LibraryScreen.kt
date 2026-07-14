@@ -34,6 +34,9 @@ import com.example.viewmodel.MainViewModel
 import java.io.File
 import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,6 +48,74 @@ fun LibraryScreen(
 ) {
     val books by viewModel.repository.allBooks.collectAsState(emptyList())
     val context = LocalContext.current
+
+    // Search, Filter, Sort, Batch state
+    var searchQuery by remember { mutableStateOf("") }
+    var sortBy by remember { mutableStateOf("Title A-Z") } // "Title A-Z", "Title Z-A", "Total Chapters", "Unread Chapters", "Last Updated"
+    var isBatchMode by remember { mutableStateOf(false) }
+    var selectedBookIds by remember { mutableStateOf(emptySet<String>()) }
+
+    var showImportProgressDialog by remember { mutableStateOf(false) }
+    var importProgressMessage by remember { mutableStateOf("") }
+    var showImportStatusDialog by remember { mutableStateOf(false) }
+    var importStatusMessage by remember { mutableStateOf("") }
+
+    // Keep Map of bookId -> unreadCount in memory to sort
+    val unreadCounts = remember { mutableStateMapOf<String, Int>() }
+
+    LaunchedEffect(books) {
+        books.forEach { book ->
+            val count = viewModel.repository.getUnreadChapterCount(book.id)
+            unreadCounts[book.id] = count
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            importProgressMessage = "Importing local file... Please wait..."
+            showImportProgressDialog = true
+            val isEpub = uri.toString().endsWith(".epub", ignoreCase = true) || 
+                         (context.contentResolver.getType(uri)?.contains("epub") == true)
+            viewModel.importLocalFile(context, uri, isEpub = isEpub) { success, msg ->
+                showImportProgressDialog = false
+                importStatusMessage = msg
+                showImportStatusDialog = true
+            }
+        }
+    }
+
+    val restoreLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            importProgressMessage = "Restoring library backup... Please wait..."
+            showImportProgressDialog = true
+            viewModel.restoreLibrary(context, uri) { success, msg ->
+                showImportProgressDialog = false
+                importStatusMessage = msg
+                showImportStatusDialog = true
+            }
+        }
+    }
+
+    val filteredAndSortedBooks = remember(books, searchQuery, sortBy, unreadCounts.toMap()) {
+        var list = books.filter {
+            it.title.contains(searchQuery, ignoreCase = true) || 
+            it.author.contains(searchQuery, ignoreCase = true)
+        }
+        
+        list = when (sortBy) {
+            "Title A-Z" -> list.sortedBy { it.title.lowercase() }
+            "Title Z-A" -> list.sortedByDescending { it.title.lowercase() }
+            "Total Chapters" -> list.sortedByDescending { it.totalChapters }
+            "Unread Chapters" -> list.sortedByDescending { unreadCounts[it.id] ?: 0 }
+            "Last Updated" -> list.sortedByDescending { it.updatedAt }
+            else -> list.sortedBy { it.title.lowercase() }
+        }
+        list
+    }
 
     // Glossary state
     var activeGlossaryBook by remember { mutableStateOf<BookEntity?>(null) }
@@ -62,98 +133,323 @@ fun LibraryScreen(
     var rescrapeResultMessage by remember { mutableStateOf("") }
     var showRescrapeResultDialog by remember { mutableStateOf(false) }
 
-    LazyColumn(
+    Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)
     ) {
-        if (books.isEmpty()) {
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillParentMaxSize()
-                        .padding(24.dp),
-                    contentAlignment = Alignment.Center
+        // Control Card (Search, Sort, Import, Batch Panel)
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search title, author...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Clear")
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("library_search_input"),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Book,
-                            contentDescription = "Empty Library",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                            modifier = Modifier.size(64.dp)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "Your library is empty.",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onBackground
+                    var showSortMenu by remember { mutableStateOf(false) }
+                    Box {
+                        TextButton(
+                            onClick = { showSortMenu = true },
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Icon(Icons.Default.Sort, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Sort: $sortBy", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                        DropdownMenu(
+                            expanded = showSortMenu,
+                            onDismissRequest = { showSortMenu = false }
+                        ) {
+                            listOf("Title A-Z", "Title Z-A", "Total Chapters", "Unread Chapters", "Last Updated").forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(option) },
+                                    onClick = {
+                                        sortBy = option
+                                        showSortMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        IconButton(
+                            onClick = { 
+                                isBatchMode = !isBatchMode 
+                                selectedBookIds = emptySet()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = if (isBatchMode) Icons.Default.Close else Icons.Default.Checklist,
+                                contentDescription = "Batch Actions",
+                                tint = if (isBatchMode) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                             )
-                        )
+                        }
+
+                        var showImportBackupMenu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { showImportBackupMenu = true }) {
+                                Icon(Icons.Default.SystemUpdateAlt, contentDescription = "Import / Sync", tint = MaterialTheme.colorScheme.primary)
+                            }
+                            DropdownMenu(
+                                expanded = showImportBackupMenu,
+                                onDismissRequest = { showImportBackupMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Import Local EPUB/TXT") },
+                                    onClick = {
+                                        showImportBackupMenu = false
+                                        importLauncher.launch("*/*")
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.UploadFile, contentDescription = null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Backup Library") },
+                                    onClick = {
+                                        showImportBackupMenu = false
+                                        viewModel.backupLibrary(context) { success, pathOrError ->
+                                            if (success) {
+                                                shareFile(context, File(pathOrError), "application/json")
+                                            } else {
+                                                android.widget.Toast.makeText(context, "Backup failed: $pathOrError", android.widget.Toast.LENGTH_LONG).show()
+                                            }
+                                        }
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Restore Library Backup") },
+                                    onClick = {
+                                        showImportBackupMenu = false
+                                        restoreLauncher.launch("application/json")
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Restore, contentDescription = null) }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (isBatchMode) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                            .padding(8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            text = "Download novels from the 'Scrape' tab to read offline.",
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
-                            ),
-                            modifier = Modifier.padding(top = 4.dp),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            text = "Selected: ${selectedBookIds.size}",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            modifier = Modifier.padding(start = 8.dp)
                         )
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = {
+                                    if (selectedBookIds.isNotEmpty()) {
+                                        viewModel.bulkReScrapeBooks(selectedBookIds) { msg ->
+                                            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                                            isBatchMode = false
+                                            selectedBookIds = emptySet()
+                                        }
+                                    }
+                                },
+                                enabled = selectedBookIds.isNotEmpty(),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Re-scrape", fontSize = 12.sp)
+                            }
+
+                            Button(
+                                onClick = {
+                                    if (selectedBookIds.isNotEmpty()) {
+                                        viewModel.bulkDeleteBooks(selectedBookIds)
+                                        isBatchMode = false
+                                        selectedBookIds = emptySet()
+                                    }
+                                },
+                                enabled = selectedBookIds.isNotEmpty(),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Delete", fontSize = 12.sp)
+                            }
+                        }
                     }
                 }
             }
-        } else {
-            items(books) { book ->
-                LibraryBookItem(
-                    book = book,
-                    onRead = { onOpenBook(book.id) },
-                    onListen = { viewModel.startTtsForBook(book) },
-                    onGlossary = {
-                        activeGlossaryBook = book
-                        showGlossaryDialog = true
-                    },
-                    onExportEpub = {
-                        viewModel.compileFormat(book, "EPUB") { ok, path ->
-                            exportStatusMessage = if (ok) {
-                                "EPUB compiled successfully!\nFile: $path"
-                            } else {
-                                "Failed to compile EPUB!"
+        }
+
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp)
+        ) {
+            if (filteredAndSortedBooks.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 64.dp, bottom = 64.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Book,
+                                contentDescription = "Empty Library",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.size(64.dp)
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = "No matching novels.",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                            )
+                            Text(
+                                text = "Try modifying your search or download new books from 'Scrape' tab.",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                ),
+                                modifier = Modifier.padding(top = 4.dp),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            } else {
+                items(filteredAndSortedBooks) { book ->
+                    LibraryBookItem(
+                        book = book,
+                        onRead = { onOpenBook(book.id) },
+                        onListen = { viewModel.startTtsForBook(book) },
+                        onGlossary = {
+                            activeGlossaryBook = book
+                            showGlossaryDialog = true
+                        },
+                        onExportEpub = {
+                            viewModel.compileFormat(book, "EPUB") { ok, path ->
+                                exportStatusMessage = if (ok) {
+                                    "EPUB compiled successfully!\nFile: $path"
+                                } else {
+                                    "Failed to compile EPUB!"
+                                }
+                                showExportResultDialog = true
+                                if (ok) shareFile(context, File(path), "application/epub+zip")
                             }
-                            showExportResultDialog = true
-                            if (ok) shareFile(context, File(path), "application/epub+zip")
-                        }
-                    },
-                    onExportPdf = {
-                        viewModel.compileFormat(book, "PDF") { ok, path ->
-                            exportStatusMessage = if (ok) {
-                                "PDF compiled successfully!\nFile: $path"
-                            } else {
-                                "Failed to compile PDF!"
+                        },
+                        onExportPdf = {
+                            viewModel.compileFormat(book, "PDF") { ok, path ->
+                                exportStatusMessage = if (ok) {
+                                    "PDF compiled successfully!\nFile: $path"
+                                } else {
+                                    "Failed to compile PDF!"
+                                }
+                                showExportResultDialog = true
+                                if (ok) shareFile(context, File(path), "application/pdf")
                             }
-                            showExportResultDialog = true
-                            if (ok) shareFile(context, File(path), "application/pdf")
-                        }
-                    },
-                    onDelete = {
-                        activeDeleteBook = book
-                        showDeleteConfirmDialog = true
-                    },
-                    onRescrapeCorrupted = {
-                        viewModel.rescrapeCorruptedChapters(book.id) { success, message ->
-                            rescrapeResultMessage = message
-                            showRescrapeResultDialog = true
-                        }
-                    },
-                    onCheckNewChapters = { viewModel.checkForNewChapters(book) },
-                    isCheckingNewChapters = viewModel.isCheckingNewChapters && viewModel.checkingNewChaptersBookId == book.id
-                )
+                        },
+                        onDelete = {
+                            activeDeleteBook = book
+                            showDeleteConfirmDialog = true
+                        },
+                        onRescrapeCorrupted = {
+                            viewModel.rescrapeCorruptedChapters(book.id) { success, message ->
+                                rescrapeResultMessage = message
+                                showRescrapeResultDialog = true
+                            }
+                        },
+                        onCheckNewChapters = { viewModel.checkForNewChapters(book) },
+                        isCheckingNewChapters = viewModel.isCheckingNewChapters && viewModel.checkingNewChaptersBookId == book.id,
+                        isBatchMode = isBatchMode,
+                        isSelected = selectedBookIds.contains(book.id),
+                        onToggleSelect = {
+                            selectedBookIds = if (selectedBookIds.contains(book.id)) {
+                                selectedBookIds - book.id
+                            } else {
+                                selectedBookIds + book.id
+                            }
+                        },
+                        unreadCount = unreadCounts[book.id] ?: 0
+                    )
+                }
             }
         }
+    }
+
+    // --- Import / Restore Progress Dialog ---
+    if (showImportProgressDialog) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Processing File...") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    CircularProgressIndicator()
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(importProgressMessage, style = MaterialTheme.typography.bodyMedium)
+                }
+            },
+            confirmButton = {}
+        )
+    }
+
+    // --- Import Status Dialog ---
+    if (showImportStatusDialog) {
+        AlertDialog(
+            onDismissRequest = { showImportStatusDialog = false },
+            title = { Text("Import Status") },
+            text = { Text(importStatusMessage) },
+            confirmButton = {
+                Button(onClick = { showImportStatusDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
     }
 
     // --- Confirmation Delete Dialog ---
@@ -300,6 +596,10 @@ fun LibraryBookItem(
     onRescrapeCorrupted: () -> Unit,
     onCheckNewChapters: () -> Unit,
     isCheckingNewChapters: Boolean,
+    isBatchMode: Boolean = false,
+    isSelected: Boolean = false,
+    onToggleSelect: () -> Unit = {},
+    unreadCount: Int = 0,
     modifier: Modifier = Modifier
 ) {
     var expandedMenu by remember { mutableStateOf(false) }
@@ -320,8 +620,16 @@ fun LibraryBookItem(
         ) {
             Row(
                 verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = if (isBatchMode) Modifier.clickable { onToggleSelect() } else Modifier
             ) {
+                if (isBatchMode) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onToggleSelect() },
+                        modifier = Modifier.align(Alignment.CenterVertically)
+                    )
+                }
                 // Cover image or Placeholder
                 val hasLocalCover = !book.coverLocalPath.isNullOrEmpty() && File(book.coverLocalPath!!).exists()
                 if (hasLocalCover) {
@@ -501,6 +809,22 @@ fun LibraryBookItem(
                             fontWeight = FontWeight.Bold
                         )
                     )
+                    if (unreadCount > 0) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.padding(start = 2.dp)
+                        ) {
+                            Text(
+                                text = "$unreadCount unread",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
                     if (isCheckingNewChapters) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),

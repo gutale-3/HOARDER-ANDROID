@@ -13,9 +13,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ChapterEntity::class,
         GlossaryEntity::class,
         PolishedChapterEntity::class,
-        ChapterRecapEntity::class
+        ChapterRecapEntity::class,
+        BookmarkEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

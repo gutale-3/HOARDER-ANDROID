@@ -12,6 +12,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import android.webkit.CookieManager
 import android.webkit.WebView
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -77,6 +78,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var userGeminiApiKey by mutableStateOf("")
         private set
 
+    // --- Auto-download / Reading Queue ---
+    var autoDownloadNextEnabled by mutableStateOf(true)
+
+    // --- Reader Settings ---
+    var readerTheme by mutableStateOf("auto") // "light", "dark", "auto"
+    var readerLineHeight by mutableStateOf(1.4f)
+    var readerMargin by mutableStateOf(16) // in dp padding
+
+    // --- Customizable AI Prompts ---
+    var glossaryPrompt by mutableStateOf("")
+    var polishPrompt by mutableStateOf("")
+    var recapPrompt by mutableStateOf("")
+
+    // --- Scrape Error/Retry Tracking ---
+    var failedChaptersList by mutableStateOf<List<MissingChapter>>(emptyList())
+
+    // --- Multi-Select Mode for Library ---
+    var isLibraryMultiSelectMode by mutableStateOf(false)
+    var selectedLibraryBookIds by mutableStateOf<Set<String>>(emptySet())
+
     val aiRegistry = com.example.data.ai.AiProviderRegistry(application)
     val modelManager = com.example.data.ai.ModelManager(application)
 
@@ -90,8 +111,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         userGeminiApiKey = prefs.getString("gemini_api_key", "") ?: ""
         focusModeEnabled = prefs.getBoolean("focus_mode", false)
         ttsAutoScrollEnabled = prefs.getBoolean("tts_auto_scroll", true)
+
+        autoDownloadNextEnabled = prefs.getBoolean("auto_download_next", true)
+        readerTheme = prefs.getString("reader_theme", "auto") ?: "auto"
+        readerLineHeight = prefs.getFloat("reader_line_height", 1.4f)
+        readerMargin = prefs.getInt("reader_margin", 16)
+
+        glossaryPrompt = prefs.getString("glossary_prompt", "Analyze the following novel content and identify character names, locations, and unique terms that are poorly machine-translated or require a consistent translation glossary.") ?: "Analyze the following novel content and identify character names, locations, and unique terms that are poorly machine-translated or require a consistent translation glossary."
+        polishPrompt = prefs.getString("polish_prompt", "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text.") ?: "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text."
+        recapPrompt = prefs.getString("recap_prompt", "Provide a concise summary ('Previously on...') of the following chapter. Focus on key plot points and character actions in 2-3 sentences. Do not add metadata or conversational padding.") ?: "Provide a concise summary ('Previously on...') of the following chapter. Focus on key plot points and character actions in 2-3 sentences. Do not add metadata or conversational padding."
+
         registerTtsReceiver()
         loadResumableTtsSession()
+        scheduleChapterUpdatesCheck()
     }
 
     fun updateGeminiApiKey(key: String) {
@@ -117,6 +149,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateFontFamily(family: String) {
         readerFontFamily = family
         prefs.edit().putString("reader_font_family", family).apply()
+    }
+
+    fun updateReaderTheme(theme: String) {
+        readerTheme = theme
+        prefs.edit().putString("reader_theme", theme).apply()
+    }
+
+    fun updateReaderLineHeight(height: Float) {
+        readerLineHeight = height
+        prefs.edit().putFloat("reader_line_height", height).apply()
+    }
+
+    fun updateReaderMargin(margin: Int) {
+        readerMargin = margin
+        prefs.edit().putInt("reader_margin", margin).apply()
+    }
+
+    fun updateAutoDownloadNextEnabled(enabled: Boolean) {
+        autoDownloadNextEnabled = enabled
+        prefs.edit().putBoolean("auto_download_next", enabled).apply()
+    }
+
+    fun updateGlossaryPrompt(prompt: String) {
+        glossaryPrompt = prompt
+        prefs.edit().putString("glossary_prompt", prompt).apply()
+    }
+
+    fun updatePolishPrompt(prompt: String) {
+        polishPrompt = prompt
+        prefs.edit().putString("polish_prompt", prompt).apply()
+    }
+
+    fun updateRecapPrompt(prompt: String) {
+        recapPrompt = prompt
+        prefs.edit().putString("recap_prompt", prompt).apply()
     }
 
     // --- Stats state ---
@@ -2297,6 +2364,374 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         
         return@withContext Pair(chaptersModified, totalMatchesReplaced)
+    }
+
+    // --- API Key Connection Test ---
+    fun validateApiKey(key: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val tempProvider = com.example.data.ai.GeminiCloudProvider { key }
+                val response = tempProvider.generate("Say 'OK'.", jsonMode = false)
+                if (response.startsWith("Error:")) {
+                    onResult(false, response)
+                } else {
+                    onResult(true, "API Connection Successful!")
+                }
+            } catch (e: Exception) {
+                onResult(false, e.message ?: "Connection validation failed.")
+            }
+        }
+    }
+
+    // --- Bulk Operations ---
+    fun bulkDeleteBooks(bookIds: Set<String>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            for (id in bookIds) {
+                repository.deleteBook(id)
+            }
+            withContext(Dispatchers.Main) {
+                selectedLibraryBookIds = emptySet()
+                isLibraryMultiSelectMode = false
+            }
+        }
+    }
+
+    fun bulkReScrapeBooks(bookIds: Set<String>, onResult: (String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            var checked = 0
+            var added = 0
+            for (id in bookIds) {
+                val book = repository.getBook(id) ?: continue
+                try {
+                    val scraper = SourceManager.getSourceForUrl(book.url)
+                    val webView = withContext(Dispatchers.Main) {
+                        WebView(getApplication<Application>().applicationContext).apply {
+                            settings.javaScriptEnabled = true
+                        }
+                    }
+                    val urls = scraper.scrapeChapterList(webView, book.url)
+                    if (urls.isNotEmpty()) {
+                        val currentCount = repository.getChapterCount(book.id)
+                        val diff = urls.size - currentCount
+                        if (diff > 0) {
+                            added += diff
+                        }
+                    }
+                    checked++
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            withContext(Dispatchers.Main) {
+                selectedLibraryBookIds = emptySet()
+                isLibraryMultiSelectMode = false
+                onResult("Checked $checked novels. Found $added new chapters to download!")
+            }
+        }
+    }
+
+    // --- Library Backup / Restore ---
+    fun backupLibrary(context: Context, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val books = repository.getAllBooks()
+                val allChapters = mutableListOf<ChapterEntity>()
+                val allGlossaries = repository.getAllGlossaries()
+                val allBookmarks = repository.getAllBookmarks()
+                
+                for (book in books) {
+                    allChapters.addAll(repository.getChapters(book.id))
+                }
+                
+                val backupObj = org.json.JSONObject()
+                
+                // Books
+                val booksArray = org.json.JSONArray()
+                for (b in books) {
+                    val j = org.json.JSONObject().apply {
+                        put("id", b.id)
+                        put("title", b.title)
+                        put("author", b.author)
+                        put("coverUrl", b.coverUrl)
+                        put("coverLocalPath", b.coverLocalPath)
+                        put("totalChapters", b.totalChapters)
+                        put("url", b.url)
+                        put("lastReadChapterId", b.lastReadChapterId)
+                        put("synopsis", b.synopsis)
+                    }
+                    booksArray.put(j)
+                }
+                backupObj.put("books", booksArray)
+                
+                // Chapters
+                val chaptersArray = org.json.JSONArray()
+                for (c in allChapters) {
+                    val j = org.json.JSONObject().apply {
+                        put("id", c.id)
+                        put("bookId", c.bookId)
+                        put("chapterId", c.chapterId)
+                        put("chapterNumber", c.chapterNumber)
+                        put("title", c.title)
+                        put("url", c.url)
+                        put("content", c.content)
+                        put("hash", c.hash)
+                        put("isRead", c.isRead)
+                    }
+                    chaptersArray.put(j)
+                }
+                backupObj.put("chapters", chaptersArray)
+                
+                // Glossaries
+                val glossariesArray = org.json.JSONArray()
+                for (g in allGlossaries) {
+                    val j = org.json.JSONObject().apply {
+                        put("id", g.id)
+                        put("bookId", g.bookId)
+                        put("originalText", g.originalText)
+                        put("replacementText", g.replacementText)
+                    }
+                    glossariesArray.put(j)
+                }
+                backupObj.put("glossaries", glossariesArray)
+                
+                // Bookmarks
+                val bookmarksArray = org.json.JSONArray()
+                for (b in allBookmarks) {
+                    val j = org.json.JSONObject().apply {
+                        put("id", b.id)
+                        put("bookId", b.bookId)
+                        put("chapterId", b.chapterId)
+                        put("paragraphIndex", b.paragraphIndex)
+                        put("text", b.text)
+                        put("note", b.note)
+                        put("timestamp", b.timestamp)
+                    }
+                    bookmarksArray.put(j)
+                }
+                backupObj.put("bookmarks", bookmarksArray)
+                
+                val backupFile = java.io.File(context.cacheDir, "novel_hoarder_library_backup.json")
+                backupFile.writeText(backupObj.toString())
+                
+                withContext(Dispatchers.Main) {
+                    onResult(true, backupFile.absolutePath)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    onResult(false, e.message ?: "Failed to generate backup JSON")
+                }
+            }
+        }
+    }
+
+    fun restoreLibrary(context: Context, uri: Uri, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val inputStream = context.contentResolver.openInputStream(uri) ?: throw Exception("Could not open input stream")
+                val jsonString = inputStream.bufferedReader().use { it.readText() }
+                val backupObj = org.json.JSONObject(jsonString)
+                
+                // Books
+                val booksArray = backupObj.optJSONArray("books")
+                if (booksArray != null) {
+                    val list = mutableListOf<BookEntity>()
+                    for (i in 0 until booksArray.length()) {
+                        val j = booksArray.getJSONObject(i)
+                        list.add(
+                            BookEntity(
+                                id = j.getString("id"),
+                                title = j.getString("title"),
+                                author = j.getString("author"),
+                                coverUrl = j.getString("coverUrl"),
+                                coverLocalPath = j.optString("coverLocalPath", null),
+                                totalChapters = j.getInt("totalChapters"),
+                                url = j.getString("url"),
+                                lastReadChapterId = j.optString("lastReadChapterId", null),
+                                synopsis = j.optString("synopsis", "")
+                            )
+                        )
+                    }
+                    repository.insertBooks(list)
+                }
+                
+                // Chapters
+                val chaptersArray = backupObj.optJSONArray("chapters")
+                if (chaptersArray != null) {
+                    val list = mutableListOf<ChapterEntity>()
+                    for (i in 0 until chaptersArray.length()) {
+                        val j = chaptersArray.getJSONObject(i)
+                        list.add(
+                            ChapterEntity(
+                                id = j.getString("id"),
+                                bookId = j.getString("bookId"),
+                                chapterId = j.getString("chapterId"),
+                                chapterNumber = j.getInt("chapterNumber"),
+                                title = j.getString("title"),
+                                url = j.getString("url"),
+                                content = j.getString("content"),
+                                hash = j.optString("hash", ""),
+                                isRead = j.optBoolean("isRead", false)
+                            )
+                        )
+                    }
+                    repository.insertChapters(list)
+                }
+                
+                // Glossaries
+                val glossariesArray = backupObj.optJSONArray("glossaries")
+                if (glossariesArray != null) {
+                    val list = mutableListOf<GlossaryEntity>()
+                    for (i in 0 until glossariesArray.length()) {
+                        val j = glossariesArray.getJSONObject(i)
+                        list.add(
+                            GlossaryEntity(
+                                id = j.getInt("id"),
+                                bookId = j.getString("bookId"),
+                                originalText = j.getString("originalText"),
+                                replacementText = j.getString("replacementText")
+                            )
+                        )
+                    }
+                    repository.insertGlossaries(list)
+                }
+                
+                // Bookmarks
+                val bookmarksArray = backupObj.optJSONArray("bookmarks")
+                if (bookmarksArray != null) {
+                    val list = mutableListOf<BookmarkEntity>()
+                    for (i in 0 until bookmarksArray.length()) {
+                        val j = bookmarksArray.getJSONObject(i)
+                        list.add(
+                            BookmarkEntity(
+                                id = j.getString("id"),
+                                bookId = j.getString("bookId"),
+                                chapterId = j.getString("chapterId"),
+                                paragraphIndex = j.getInt("paragraphIndex"),
+                                text = j.getString("text"),
+                                note = j.optString("note", ""),
+                                timestamp = j.optLong("timestamp", System.currentTimeMillis())
+                            )
+                        )
+                    }
+                    repository.insertBookmarks(list)
+                }
+                
+                withContext(Dispatchers.Main) {
+                    onResult(true, "Library restored successfully!")
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    onResult(false, "Failed to restore: ${e.message}")
+                }
+            }
+        }
+    }
+
+    // --- Import Local File ---
+    fun importLocalFile(context: Context, uri: Uri, isEpub: Boolean, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = if (isEpub) {
+                com.example.util.EpubImporter.importEpub(context, uri)
+            } else {
+                com.example.util.EpubImporter.importTxt(context, uri)
+            }
+            
+            if (result != null) {
+                repository.insertBook(result.first)
+                repository.insertChapters(result.second)
+                withContext(Dispatchers.Main) {
+                    onResult(true, "Imported \"${result.first.title}\" with ${result.second.size} chapters!")
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    onResult(false, "Failed to parse local book file. Ensure the format is valid.")
+                }
+            }
+        }
+    }
+
+    // --- Background Chapter Updates Checker ---
+    fun scheduleChapterUpdatesCheck() {
+        val context = getApplication<Application>().applicationContext
+        try {
+            val workRequest = androidx.work.PeriodicWorkRequestBuilder<com.example.background.ChapterUpdateWorker>(
+                6, java.util.concurrent.TimeUnit.HOURS
+            ).build()
+            androidx.work.WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                "chapter_updates_work",
+                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                workRequest
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+    fun triggerAutoDownloadNextChapters(book: BookEntity, currentChapter: ChapterEntity) {
+        if (!autoDownloadNextEnabled) return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (book.url.startsWith("local://")) return@launch
+                val scraper = SourceManager.getSourceForUrl(book.url)
+                val webView = withContext(Dispatchers.Main) {
+                    WebView(getApplication<Application>().applicationContext).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                    }
+                }
+                
+                val chapterUrls = scraper.scrapeChapterList(webView, book.url)
+                if (chapterUrls.isEmpty()) return@launch
+                
+                val currentIdx = chapterUrls.indexOfFirst { it == currentChapter.url }
+                if (currentIdx == -1) return@launch
+                
+                val nextUrls = chapterUrls.drop(currentIdx + 1).take(3)
+                val glossaries = repository.getGlossary(book.id)
+                
+                for ((offset, nextUrl) in nextUrls.withIndex()) {
+                    val absoluteChapterNum = currentChapter.chapterNumber + 1 + offset
+                    val chapId = scraper.parseChapterId(nextUrl) ?: "ch_$absoluteChapterNum"
+                    val fullChapId = "${book.id}_$chapId"
+                    
+                    val existing = repository.getChapter(fullChapId)
+                    if (existing != null && existing.content.length > 100) {
+                        continue
+                    }
+                    
+                    try {
+                        val rawContent = scraper.scrapeChapterContent(webView, nextUrl) { false }
+                        val title = rawContent.first
+                        var cleanedBody = TomatoScraper.sanitizeText(rawContent.second, aggressiveClean)
+                        
+                        if (glossaries.isNotEmpty()) {
+                            cleanedBody = repository.applyGlossary(cleanedBody, glossaries)
+                        }
+                        
+                        val md5 = java.security.MessageDigest.getInstance("MD5")
+                        val hash = md5.digest(cleanedBody.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                        
+                        val chapterEntity = ChapterEntity(
+                            id = fullChapId,
+                            bookId = book.id,
+                            chapterId = chapId,
+                            chapterNumber = absoluteChapterNum,
+                            title = title,
+                            url = nextUrl,
+                            content = cleanedBody,
+                            hash = hash
+                        )
+                        repository.insertChapter(chapterEntity)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     override fun onCleared() {

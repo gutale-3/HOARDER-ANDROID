@@ -8,6 +8,8 @@ class NovelRepository(private val bookDao: BookDao) {
 
     val allBooks: Flow<List<BookEntity>> = bookDao.getAllBooksFlow()
 
+    suspend fun getAllBooks(): List<BookEntity> = bookDao.getAllBooks()
+
     suspend fun getBook(id: String): BookEntity? = bookDao.getBookById(id)
 
     fun getBookFlow(id: String): Flow<BookEntity?> = bookDao.getBookByIdFlow(id)
@@ -16,7 +18,7 @@ class NovelRepository(private val bookDao: BookDao) {
 
     suspend fun updateBook(book: BookEntity) = bookDao.updateBook(book)
 
-    suspend fun deleteBook(id: String) = bookDao.deleteBookById(id)
+    suspend fun deleteBook(id: String) = bookDao.deleteBookFully(id)
 
     suspend fun getBookCount(): Int = bookDao.getBookCount()
 
@@ -70,6 +72,25 @@ class NovelRepository(private val bookDao: BookDao) {
 
     // --- Bulk Updates / Find-and-Replace ---
     suspend fun updateChapterContent(id: String, content: String) = bookDao.updateChapterContent(id, content)
+
+    // --- Bookmarks ---
+    fun getBookmarksFlow(bookId: String): Flow<List<BookmarkEntity>> = bookDao.getBookmarksForBookFlow(bookId)
+
+    suspend fun insertBookmark(bookmark: BookmarkEntity) = bookDao.insertBookmark(bookmark)
+
+    suspend fun deleteBookmark(id: String) = bookDao.deleteBookmarkById(id)
+
+    // --- Unread Counts ---
+    suspend fun getUnreadChapterCount(bookId: String): Int = bookDao.getUnreadChapterCount(bookId)
+
+    fun getUnreadChapterCountFlow(bookId: String): Flow<Int> = bookDao.getUnreadChapterCountFlow(bookId)
+
+    // --- Bulk Backup Helpers ---
+    suspend fun getAllBookmarks(): List<BookmarkEntity> = bookDao.getAllBookmarks()
+    suspend fun getAllGlossaries(): List<GlossaryEntity> = bookDao.getAllGlossaries()
+    suspend fun insertBooks(books: List<BookEntity>) = bookDao.insertBooks(books)
+    suspend fun insertGlossaries(glossaries: List<GlossaryEntity>) = bookDao.insertGlossaries(glossaries)
+    suspend fun insertBookmarks(bookmarks: List<BookmarkEntity>) = bookDao.insertBookmarks(bookmarks)
 
     // --- Glossary application helper ---
     fun applyGlossary(text: String, glossary: List<GlossaryEntity>): String {

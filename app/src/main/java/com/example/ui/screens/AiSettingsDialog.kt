@@ -204,7 +204,7 @@ fun AiSettingsDialog(
 
                     Divider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                    // Gemini API Key Input Field
+                    // Gemini API Key Input Field with Validation
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
                             text = "Cloud Gemini API Key",
@@ -218,12 +218,17 @@ fun AiSettingsDialog(
                         )
                         
                         var apiKeyText by remember { mutableStateOf(viewModel.userGeminiApiKey) }
+                        var validationResult by remember { mutableStateOf<String?>(null) }
+                        var isCurrentlyValidating by remember { mutableStateOf(false) }
+                        var wasValidationSuccessful by remember { mutableStateOf<Boolean?>(null) }
                         
                         OutlinedTextField(
                             value = apiKeyText,
                             onValueChange = {
                                 apiKeyText = it
                                 viewModel.updateGeminiApiKey(it)
+                                validationResult = null
+                                wasValidationSuccessful = null
                             },
                             label = { Text("Gemini API Key") },
                             placeholder = { Text("AIzaSy...") },
@@ -237,12 +242,137 @@ fun AiSettingsDialog(
                                     IconButton(onClick = {
                                         apiKeyText = ""
                                         viewModel.updateGeminiApiKey("")
+                                        validationResult = null
+                                        wasValidationSuccessful = null
                                     }) {
                                         Icon(Icons.Default.Clear, contentDescription = "Clear Key")
                                     }
                                 }
                             }
                         )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Button(
+                                onClick = {
+                                    isCurrentlyValidating = true
+                                    viewModel.validateApiKey(apiKeyText) { success, msg ->
+                                        isCurrentlyValidating = false
+                                        wasValidationSuccessful = success
+                                        validationResult = msg
+                                    }
+                                },
+                                enabled = apiKeyText.isNotEmpty() && !isCurrentlyValidating,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                if (isCurrentlyValidating) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Validating...", fontSize = 12.sp)
+                                } else {
+                                    Icon(Icons.Default.OfflineBolt, contentDescription = "Validate", modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Test Connection", fontSize = 12.sp)
+                                }
+                            }
+                            
+                            if (validationResult != null) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (wasValidationSuccessful == true) Icons.Default.CheckCircle else Icons.Default.Error,
+                                        contentDescription = "Status",
+                                        tint = if (wasValidationSuccessful == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = validationResult!!,
+                                        color = if (wasValidationSuccessful == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Divider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    // Customizable AI Prompts Section
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text = "Customizable AI Prompt Guides",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "Fine-tune the custom system instructions that guide the Gemini engine for advanced text parsing, summary building, and names translation.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        
+                        var showPromptSettings by remember { mutableStateOf(false) }
+                        
+                        OutlinedButton(
+                            onClick = { showPromptSettings = !showPromptSettings },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                imageVector = if (showPromptSettings) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Toggle Prompts"
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(if (showPromptSettings) "Hide Custom Prompts" else "Show & Edit Custom Prompts")
+                        }
+                        
+                        if (showPromptSettings) {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                // Glossary Prompt
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("Glossary Generator Prompt", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                                    OutlinedTextField(
+                                        value = viewModel.glossaryPrompt,
+                                        onValueChange = { viewModel.updateGlossaryPrompt(it) },
+                                        minLines = 3,
+                                        maxLines = 5,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                }
+                                
+                                // Polish Prompt
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("Prose Polish Prompt", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                                    OutlinedTextField(
+                                        value = viewModel.polishPrompt,
+                                        onValueChange = { viewModel.updatePolishPrompt(it) },
+                                        minLines = 3,
+                                        maxLines = 5,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                }
+                                
+                                // Recap Prompt
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("Chapter Summary Prompt", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                                    OutlinedTextField(
+                                        value = viewModel.recapPrompt,
+                                        onValueChange = { viewModel.updateRecapPrompt(it) },
+                                        minLines = 3,
+                                        maxLines = 5,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     Divider(color = MaterialTheme.colorScheme.outlineVariant)

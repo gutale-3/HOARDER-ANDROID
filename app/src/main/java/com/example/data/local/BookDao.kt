@@ -9,6 +9,9 @@ interface BookDao {
     @Query("SELECT * FROM books ORDER BY updatedAt DESC")
     fun getAllBooksFlow(): Flow<List<BookEntity>>
 
+    @Query("SELECT * FROM books ORDER BY updatedAt DESC")
+    suspend fun getAllBooks(): List<BookEntity>
+
     @Query("SELECT * FROM books WHERE id = :id")
     suspend fun getBookById(id: String): BookEntity?
 
@@ -31,6 +34,31 @@ interface BookDao {
 
     @Query("DELETE FROM books WHERE id = :id")
     suspend fun deleteBookById(id: String)
+
+    @Query("DELETE FROM chapters WHERE bookId = :bookId")
+    suspend fun deleteChaptersByBookId(bookId: String)
+
+    @Query("DELETE FROM glossaries WHERE bookId = :bookId")
+    suspend fun deleteGlossariesByBookId(bookId: String)
+
+    @Query("DELETE FROM bookmarks WHERE bookId = :bookId")
+    suspend fun deleteBookmarksByBookId(bookId: String)
+
+    @Query("DELETE FROM polished_chapters WHERE bookId = :bookId")
+    suspend fun deletePolishedChaptersByBookId(bookId: String)
+
+    @Query("DELETE FROM chapter_recaps WHERE bookId = :bookId")
+    suspend fun deleteRecapsByBookId(bookId: String)
+
+    @Transaction
+    suspend fun deleteBookFully(bookId: String) {
+        deleteBookById(bookId)
+        deleteChaptersByBookId(bookId)
+        deleteGlossariesByBookId(bookId)
+        deleteBookmarksByBookId(bookId)
+        deletePolishedChaptersByBookId(bookId)
+        deleteRecapsByBookId(bookId)
+    }
 
     @Query("SELECT COUNT(*) FROM books")
     suspend fun getBookCount(): Int
@@ -108,4 +136,37 @@ interface BookDao {
     // --- Bulk Updates / Find-and-Replace ---
     @Query("UPDATE chapters SET content = :content WHERE id = :id")
     suspend fun updateChapterContent(id: String, content: String)
+
+    // --- Bookmarks ---
+    @Query("SELECT * FROM bookmarks WHERE bookId = :bookId ORDER BY timestamp DESC")
+    fun getBookmarksForBookFlow(bookId: String): Flow<List<BookmarkEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBookmark(bookmark: BookmarkEntity)
+
+    @Query("DELETE FROM bookmarks WHERE id = :id")
+    suspend fun deleteBookmarkById(id: String)
+
+    // --- Unread Counts ---
+    @Query("SELECT COUNT(*) FROM chapters WHERE bookId = :bookId AND isRead = 0")
+    suspend fun getUnreadChapterCount(bookId: String): Int
+
+    @Query("SELECT COUNT(*) FROM chapters WHERE bookId = :bookId AND isRead = 0")
+    fun getUnreadChapterCountFlow(bookId: String): Flow<Int>
+
+    // --- Bulk Backup Queries ---
+    @Query("SELECT * FROM bookmarks")
+    suspend fun getAllBookmarks(): List<BookmarkEntity>
+
+    @Query("SELECT * FROM glossaries")
+    suspend fun getAllGlossaries(): List<GlossaryEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBooks(books: List<BookEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertGlossaries(glossaries: List<GlossaryEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBookmarks(bookmarks: List<BookmarkEntity>)
 }
