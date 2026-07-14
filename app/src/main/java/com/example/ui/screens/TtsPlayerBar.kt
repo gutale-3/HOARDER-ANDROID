@@ -298,6 +298,9 @@ fun TtsPlayerBar(
             val sliderValue = if (activePara < 0) 0f else activePara.toFloat()
             val maxSliderValue = if (totalParas <= 1) 1f else (totalParas - 1).toFloat()
 
+            var draggingValue by remember { mutableStateOf<Float?>(null) }
+            val currentSliderValue = draggingValue ?: sliderValue
+
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
@@ -305,25 +308,28 @@ fun TtsPlayerBar(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (activePara < 0) "Reading Chapter Title" else "Paragraph ${activePara + 1} of $totalParas",
+                        text = if (activePara < 0) "Reading Chapter Title" else "Paragraph ${currentSliderValue.toInt() + 1} of $totalParas",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "${((sliderValue / maxSliderValue) * 100).toInt().coerceIn(0, 100)}%",
+                        text = "${((currentSliderValue / maxSliderValue) * 100).toInt().coerceIn(0, 100)}%",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold
                     )
                 }
                 Slider(
-                    value = sliderValue.coerceIn(0f, maxSliderValue),
-                    onValueChange = { /* sliding */ },
+                    value = currentSliderValue.coerceIn(0f, maxSliderValue),
+                    onValueChange = { draggingValue = it },
                     onValueChangeFinished = {
-                        viewModel.seekToParagraph(sliderValue.toInt())
+                        draggingValue?.let {
+                            viewModel.seekToParagraph(it.toInt())
+                        }
+                        draggingValue = null
                     },
                     valueRange = 0f..maxSliderValue,
-                    modifier = Modifier.fillMaxWidth().height(24.dp),
+                    modifier = Modifier.fillMaxWidth().height(24.dp).testTag("tts_slider"),
                     colors = SliderDefaults.colors(
                         thumbColor = MaterialTheme.colorScheme.primary,
                         activeTrackColor = MaterialTheme.colorScheme.primary,

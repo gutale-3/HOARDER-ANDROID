@@ -19,6 +19,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     version = 3,
     exportSchema = false
 )
+/**
+ * Room Database represents the high-performance local persistence layer on Android,
+ * serving as the robust counterpart to IndexedDB on the Web. It stores downloaded novels,
+ * chapters, custom glossaries, bookmarks, and reading progress locally to enable a fully-featured,
+ * seamless offline reading experience.
+ */
 abstract class AppDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
 

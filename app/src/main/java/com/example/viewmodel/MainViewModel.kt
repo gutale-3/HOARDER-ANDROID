@@ -85,6 +85,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var readerTheme by mutableStateOf("auto") // "light", "dark", "auto"
     var readerLineHeight by mutableStateOf(1.4f)
     var readerMargin by mutableStateOf(16) // in dp padding
+    var readerLetterSpacing by mutableStateOf(0.0f)
+    var readerCustomFontPath by mutableStateOf("")
+    var readerCustomFontName by mutableStateOf("")
+    var readerJustificationEnabled by mutableStateOf(false)
+    var readerHyphenationEnabled by mutableStateOf(false)
+    var readerAmbientSyncEnabled by mutableStateOf(false)
 
     // --- Customizable AI Prompts ---
     var glossaryPrompt by mutableStateOf("")
@@ -116,6 +122,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         readerTheme = prefs.getString("reader_theme", "auto") ?: "auto"
         readerLineHeight = prefs.getFloat("reader_line_height", 1.4f)
         readerMargin = prefs.getInt("reader_margin", 16)
+        readerLetterSpacing = prefs.getFloat("reader_letter_spacing", 0.0f)
+        readerCustomFontPath = prefs.getString("reader_custom_font_path", "") ?: ""
+        readerCustomFontName = prefs.getString("reader_custom_font_name", "") ?: ""
+        readerJustificationEnabled = prefs.getBoolean("reader_justification_enabled", false)
+        readerHyphenationEnabled = prefs.getBoolean("reader_hyphenation_enabled", false)
+        readerAmbientSyncEnabled = prefs.getBoolean("reader_ambient_sync_enabled", false)
 
         glossaryPrompt = prefs.getString("glossary_prompt", "Analyze the following novel content and identify character names, locations, and unique terms that are poorly machine-translated or require a consistent translation glossary.") ?: "Analyze the following novel content and identify character names, locations, and unique terms that are poorly machine-translated or require a consistent translation glossary."
         polishPrompt = prefs.getString("polish_prompt", "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text.") ?: "Rewrite this machine-translated chapter to be in fluent, literary, highly readable English. Preserve the exact original plot, character actions, and meaning. Do not add any commentary or prefix/suffix notes. Only return the polished story text."
@@ -164,6 +176,72 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateReaderMargin(margin: Int) {
         readerMargin = margin
         prefs.edit().putInt("reader_margin", margin).apply()
+    }
+
+    fun updateReaderLetterSpacing(spacing: Float) {
+        readerLetterSpacing = spacing.coerceIn(-0.05f, 0.25f)
+        prefs.edit().putFloat("reader_letter_spacing", readerLetterSpacing).apply()
+    }
+
+    fun updateCustomFont(path: String, name: String) {
+        readerCustomFontPath = path
+        readerCustomFontName = name
+        prefs.edit()
+            .putString("reader_custom_font_path", path)
+            .putString("reader_custom_font_name", name)
+            .apply()
+    }
+
+    fun updateJustificationEnabled(enabled: Boolean) {
+        readerJustificationEnabled = enabled
+        prefs.edit().putBoolean("reader_justification_enabled", enabled).apply()
+    }
+
+    fun updateHyphenationEnabled(enabled: Boolean) {
+        readerHyphenationEnabled = enabled
+        prefs.edit().putBoolean("reader_hyphenation_enabled", enabled).apply()
+    }
+
+    fun updateAmbientSyncEnabled(enabled: Boolean) {
+        readerAmbientSyncEnabled = enabled
+        prefs.edit().putBoolean("reader_ambient_sync_enabled", enabled).apply()
+    }
+
+    fun importCustomFont(context: Context, uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val contentResolver = context.contentResolver
+                var displayName = "CustomFont.ttf"
+                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex != -1 && cursor.moveToFirst()) {
+                        displayName = cursor.getString(nameIndex)
+                    }
+                }
+
+                val fontsDir = File(context.filesDir, "fonts")
+                if (!fontsDir.exists()) {
+                    fontsDir.mkdirs()
+                }
+                fontsDir.listFiles()?.forEach { it.delete() }
+
+                val destFile = File(fontsDir, displayName)
+                contentResolver.openInputStream(uri)?.use { inputStream ->
+                    destFile.outputStream().use { outputStream ->
+                        inputStream.copyTo(outputStream)
+                    }
+                }
+
+                if (destFile.exists()) {
+                    withContext(Dispatchers.Main) {
+                        updateCustomFont(destFile.absolutePath, displayName)
+                        updateFontFamily("custom")
+                    }
+                }
+            } catch (e: java.lang.Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     fun updateAutoDownloadNextEnabled(enabled: Boolean) {
@@ -2730,6 +2808,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+            }
+        }
+    }
+
+    fun getSavedParagraphIndex(bookId: String, chapterId: String): Int {
+        return prefs.getInt("progress_para_${bookId}_${chapterId}", 0)
+    }
+
+    fun saveReadingProgress(bookId: String, chapterId: String, paragraphIndex: Int) {
+        prefs.edit()
+            .putInt("progress_para_${bookId}_${chapterId}", paragraphIndex)
+            .putString("progress_chapter_${bookId}", chapterId)
+            .apply()
+    }
+
+    fun autoSaveProgressAndBookmark(
+        bookId: String,
+        chapterId: String,
+        paragraphIndex: Int,
+        paragraphText: String
+    ) {
+        saveReadingProgress(bookId, chapterId, paragraphIndex)
+
+        if (paragraphText.isNotEmpty()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val bookmarkId = "${bookId}_${chapterId}_${paragraphIndex}"
+                val bookmark = BookmarkEntity(
+                    id = bookmarkId,
+                    bookId = bookId,
+                    chapterId = chapterId,
+                    paragraphIndex = paragraphIndex,
+                    text = paragraphText,
+                    note = "Auto-saved Progress",
+                    timestamp = System.currentTimeMillis()
+                )
+                repository.insertBookmark(bookmark)
             }
         }
     }

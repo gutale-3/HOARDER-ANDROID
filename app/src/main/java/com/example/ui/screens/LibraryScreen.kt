@@ -880,6 +880,7 @@ fun GlossaryManagerDialog(
     val glossaries by viewModel.repository.getGlossaryFlow(book.id).collectAsState(emptyList())
     var origText by remember { mutableStateOf("") }
     var replText by remember { mutableStateOf("") }
+    var editingGlossary by remember { mutableStateOf<GlossaryEntity?>(null) }
     val scope = rememberCoroutineScope()
 
     AlertDialog(
@@ -957,7 +958,7 @@ fun GlossaryManagerDialog(
                     OutlinedTextField(
                         value = origText,
                         onValueChange = { origText = it },
-                        label = { Text("Original") },
+                        label = { Text(if (editingGlossary != null) "Edit Original" else "Original") },
                         placeholder = { Text("e.g. Master Lin") },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
@@ -967,24 +968,42 @@ fun GlossaryManagerDialog(
                     OutlinedTextField(
                         value = replText,
                         onValueChange = { replText = it },
-                        label = { Text("Replace") },
+                        label = { Text(if (editingGlossary != null) "Edit Replace" else "Replace") },
                         placeholder = { Text("e.g. Lin Feng") },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         shape = RoundedCornerShape(6.dp)
                     )
 
+                    if (editingGlossary != null) {
+                        IconButton(
+                            onClick = {
+                                editingGlossary = null
+                                origText = ""
+                                replText = ""
+                            },
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(6.dp))
+                                .size(48.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Cancel Edit", tint = MaterialTheme.colorScheme.onErrorContainer)
+                        }
+                    }
+
                     IconButton(
                         onClick = {
                             if (origText.trim().isNotEmpty()) {
                                 scope.launch {
-                                    viewModel.repository.insertGlossary(
-                                        GlossaryEntity(
-                                            bookId = book.id,
-                                            originalText = origText.trim(),
-                                            replacementText = replText.trim()
-                                        )
+                                    val toSave = editingGlossary?.copy(
+                                        originalText = origText.trim(),
+                                        replacementText = replText.trim()
+                                    ) ?: GlossaryEntity(
+                                        bookId = book.id,
+                                        originalText = origText.trim(),
+                                        replacementText = replText.trim()
                                     )
+                                    viewModel.repository.insertGlossary(toSave)
+                                    editingGlossary = null
                                     origText = ""
                                     replText = ""
                                 }
@@ -994,7 +1013,11 @@ fun GlossaryManagerDialog(
                             .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(6.dp))
                             .size(48.dp)
                     ) {
-                        Icon(imageVector = Icons.Default.Add, contentDescription = "Add", tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Icon(
+                            imageVector = if (editingGlossary != null) Icons.Default.Check else Icons.Default.Add,
+                            contentDescription = if (editingGlossary != null) "Save Edit" else "Add",
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
                     }
                 }
 
@@ -1029,14 +1052,22 @@ fun GlossaryManagerDialog(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                                    .background(
+                                        color = if (editingGlossary?.id == glossary.id) {
+                                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                        },
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
                                     .padding(horizontal = 10.dp, vertical = 6.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(
                                     modifier = Modifier.weight(1f),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
                                         text = glossary.originalText,
@@ -1050,15 +1081,36 @@ fun GlossaryManagerDialog(
                                     )
                                 }
 
-                                IconButton(
-                                    onClick = {
-                                        scope.launch {
-                                            viewModel.repository.deleteGlossary(glossary)
-                                        }
-                                    },
-                                    modifier = Modifier.size(24.dp)
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                    IconButton(
+                                        onClick = {
+                                            editingGlossary = glossary
+                                            origText = glossary.originalText
+                                            replText = glossary.replacementText
+                                        },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(imageVector = Icons.Default.Edit, contentDescription = "Edit", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                    }
+
+                                    IconButton(
+                                        onClick = {
+                                            scope.launch {
+                                                if (editingGlossary?.id == glossary.id) {
+                                                    editingGlossary = null
+                                                    origText = ""
+                                                    replText = ""
+                                                }
+                                                viewModel.repository.deleteGlossary(glossary)
+                                            }
+                                        },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                    }
                                 }
                             }
                         }

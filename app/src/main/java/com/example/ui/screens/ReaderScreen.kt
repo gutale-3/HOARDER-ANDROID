@@ -24,11 +24,22 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.Font
+import androidx.compose.foundation.border
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.content.Context
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.em
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.BookEntity
 import com.example.data.local.ChapterEntity
+import com.example.data.local.GlossaryEntity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.launch
 
@@ -42,16 +53,86 @@ fun ReaderScreen(
 ) {
     val bookState by viewModel.repository.getBookFlow(bookId).collectAsState(null)
     val chapters by viewModel.repository.getChaptersFlow(bookId).collectAsState(emptyList())
+    val glossaries by viewModel.repository.getGlossaryFlow(bookId).collectAsState(emptyList())
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
     var currentChapterId by remember { mutableStateOf("") }
+    val lazyListState = rememberLazyListState()
+
+    val isDark = isSystemInDarkTheme()
+    val readerColors = when (viewModel.readerTheme) {
+        "light" -> Pair(Color(0xFFFCFBF9), Color(0xFF1E1E1E))
+        "sepia" -> Pair(Color(0xFFF4ECD8), Color(0xFF5B4636))
+        "charcoal" -> Pair(Color(0xFF2C2C2C), Color(0xFFB0B0B0))
+        "oled" -> Pair(Color(0xFF000000), Color(0xFFE0E0E0))
+        "eink" -> Pair(Color(0xFFFFFFFF), Color(0xFF000000))
+        else -> if (isDark) Pair(Color(0xFF0E1113), Color(0xFFE2E2E6)) else Pair(Color(0xFFFCFBF9), Color(0xFF1E1E1E))
+    }
+    val readerBgColor = readerColors.first
+    val readerTextColor = readerColors.second
+
+    val barBgColor = readerBgColor
+    val barContentColor = readerTextColor
+
     val selectedFontFamily = when (viewModel.readerFontFamily) {
         "sans" -> FontFamily.SansSerif
         "mono" -> FontFamily.Monospace
+        "custom" -> {
+            val file = java.io.File(viewModel.readerCustomFontPath)
+            if (file.exists()) {
+                try {
+                    FontFamily(Font(file))
+                } catch (e: Exception) {
+                    FontFamily.Serif
+                }
+            } else {
+                FontFamily.Serif
+            }
+        }
         else -> FontFamily.Serif
+    }
+
+    // Automatic Ambient Syncing via Light Sensor
+    DisposableEffect(viewModel.readerAmbientSyncEnabled) {
+        if (viewModel.readerAmbientSyncEnabled) {
+            val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
+            val lightSensor = sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_LIGHT)
+            
+            val listener = object : android.hardware.SensorEventListener {
+                override fun onSensorChanged(event: android.hardware.SensorEvent?) {
+                    event?.let {
+                        val lux = it.values[0]
+                        if (lux < 15f) {
+                            if (viewModel.readerTheme != "oled" && viewModel.readerTheme != "charcoal") {
+                                viewModel.updateReaderTheme("oled")
+                            }
+                        } else if (lux < 250f) {
+                            if (viewModel.readerTheme != "sepia") {
+                                viewModel.updateReaderTheme("sepia")
+                            }
+                        } else {
+                            if (viewModel.readerTheme != "light") {
+                                viewModel.updateReaderTheme("light")
+                            }
+                        }
+                    }
+                }
+                override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {}
+            }
+            
+            lightSensor?.let {
+                sensorManager.registerListener(listener, it, android.hardware.SensorManager.SENSOR_DELAY_UI)
+            }
+            
+            onDispose {
+                sensorManager.unregisterListener(listener)
+            }
+        } else {
+            onDispose {}
+        }
     }
 
     // Settings panel toggles
@@ -89,7 +170,13 @@ fun ReaderScreen(
     }
 
     // Active Chapter object
-    val activeChapter = chapters.find { it.id == currentChapterId } ?: chapters.firstOrNull()
+    val activeChapter = remember(chapters, currentChapterId) {
+        if (currentChapterId.isEmpty()) {
+            chapters.firstOrNull()
+        } else {
+            chapters.find { it.id == currentChapterId }
+        }
+    }
 
     // Whenever active chapter changes, save reading progress in database and prefetch next chapters
     LaunchedEffect(activeChapter) {
@@ -501,7 +588,10 @@ fun ReaderScreen(
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface
+                        containerColor = barBgColor,
+                        titleContentColor = barContentColor,
+                        navigationIconContentColor = barContentColor,
+                        actionIconContentColor = barContentColor
                     )
                 )
             },
@@ -509,8 +599,10 @@ fun ReaderScreen(
                 // Reader Navigation controls (Previous / Next Chapters)
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    tonalElevation = 8.dp,
-                    color = MaterialTheme.colorScheme.surface
+                    tonalElevation = if (viewModel.readerTheme == "eink") 0.dp else 8.dp,
+                    color = barBgColor,
+                    contentColor = barContentColor,
+                    border = if (viewModel.readerTheme == "eink") BorderStroke(1.dp, Color.Black) else null
                 ) {
                     Row(
                         modifier = Modifier
@@ -528,7 +620,11 @@ fun ReaderScreen(
                                 if (hasPrev) currentChapterId = chapters[currentIdx - 1].id
                             },
                             enabled = hasPrev,
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = barContentColor,
+                                disabledContentColor = barContentColor.copy(alpha = 0.38f)
+                            )
                         ) {
                             Icon(imageVector = Icons.Default.ChevronLeft, contentDescription = "Prev")
                             Spacer(modifier = Modifier.width(4.dp))
@@ -541,7 +637,7 @@ fun ReaderScreen(
                             } else "",
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
+                                color = barContentColor
                             )
                         )
 
@@ -550,7 +646,11 @@ fun ReaderScreen(
                                 if (hasNext) currentChapterId = chapters[currentIdx + 1].id
                             },
                             enabled = hasNext,
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = barContentColor,
+                                disabledContentColor = barContentColor.copy(alpha = 0.38f)
+                            )
                         ) {
                             Text("Next", fontWeight = FontWeight.Bold)
                             Spacer(modifier = Modifier.width(4.dp))
@@ -563,7 +663,7 @@ fun ReaderScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background)
+                    .background(readerBgColor)
                     .padding(innerPadding)
                     .testTag("reader_canvas")
             ) {
@@ -583,11 +683,19 @@ fun ReaderScreen(
                     }
                 } else {
                     // Actual reading canvas (scrollable with generous line spacing and custom font size!)
-                    val lazyListState = rememberLazyListState()
 
-                    // Reset scroll state on chapter change
+                    // Restore scroll state or reset to 0 on chapter change
                     LaunchedEffect(currentChapterId) {
-                        lazyListState.scrollToItem(0)
+                        if (!currentChapterId.isNullOrEmpty()) {
+                            val savedPara = viewModel.getSavedParagraphIndex(bookId, currentChapterId)
+                            if (savedPara > 0) {
+                                lazyListState.scrollToItem(savedPara + 3)
+                            } else {
+                                lazyListState.scrollToItem(0)
+                            }
+                        } else {
+                            lazyListState.scrollToItem(0)
+                        }
                     }
 
                     // Auto-follow scroll: Keep the active TTS paragraph centered and visible
@@ -621,6 +729,60 @@ fun ReaderScreen(
                         chapterTextToRender.split("\n").filter { it.trim().isNotEmpty() }
                     }
 
+                    // Real-time memory tracking of current paragraph being read or listened to
+                    val currentParagraphIndex by remember {
+                        derivedStateOf {
+                            if (viewModel.ttsIsPlaying && viewModel.ttsPlayingChapter?.id == activeChapter.id) {
+                                (viewModel.ttsActiveParagraphIndex ?: -1).coerceIn(0, paragraphs.size - 1)
+                            } else {
+                                if (paragraphs.isNotEmpty()) {
+                                    (lazyListState.firstVisibleItemIndex - 3).coerceIn(0, paragraphs.size - 1)
+                                } else {
+                                    0
+                                }
+                            }
+                        }
+                    }
+
+                    val currentParagraphText by remember {
+                        derivedStateOf {
+                            if (currentParagraphIndex in paragraphs.indices) {
+                                paragraphs[currentParagraphIndex]
+                            } else {
+                                ""
+                            }
+                        }
+                    }
+
+                    // Auto-save reading progress and create bookmark when user leaves the novel or switches off phone
+                    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+                    DisposableEffect(lifecycleOwner, activeChapter.id, currentChapterId) {
+                        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                            if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE || event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                                if (currentParagraphIndex >= 0) {
+                                    viewModel.autoSaveProgressAndBookmark(
+                                        bookId = bookId,
+                                        chapterId = activeChapter.id,
+                                        paragraphIndex = currentParagraphIndex,
+                                        paragraphText = currentParagraphText
+                                    )
+                                }
+                            }
+                        }
+                        lifecycleOwner.lifecycle.addObserver(observer)
+                        onDispose {
+                            lifecycleOwner.lifecycle.removeObserver(observer)
+                            if (currentParagraphIndex >= 0) {
+                                viewModel.autoSaveProgressAndBookmark(
+                                    bookId = bookId,
+                                    chapterId = activeChapter.id,
+                                    paragraphIndex = currentParagraphIndex,
+                                    paragraphText = currentParagraphText
+                                )
+                            }
+                        }
+                    }
+
                     // Expose total paragraphs to viewmodel for TTS player bar seek slider
                     LaunchedEffect(paragraphs.size) {
                         viewModel.ttsTotalParagraphs = paragraphs.size
@@ -640,7 +802,7 @@ fun ReaderScreen(
                                 text = activeChapter.title,
                                 style = MaterialTheme.typography.headlineMedium.copy(
                                     fontWeight = FontWeight.Black,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = if (viewModel.readerTheme == "eink") Color.Black else MaterialTheme.colorScheme.primary,
                                     fontFamily = selectedFontFamily
                                 ),
                                 modifier = Modifier.padding(bottom = 8.dp)
@@ -782,10 +944,10 @@ fun ReaderScreen(
                                 }
                                 .padding(vertical = 4.dp, horizontal = 8.dp)
 
-                            val textColor = if (isReadingThisPara) {
-                                MaterialTheme.colorScheme.primary
+                            val paragraphTextColor = if (isReadingThisPara) {
+                                if (viewModel.readerTheme == "eink") Color.Black else MaterialTheme.colorScheme.primary
                             } else {
-                                MaterialTheme.colorScheme.onBackground
+                                readerTextColor
                             }
 
                             val paragraphAlpha = if (viewModel.focusModeEnabled && viewModel.ttsIsPlaying &&
@@ -796,14 +958,22 @@ fun ReaderScreen(
                                 1.0f
                             }
 
+                            val hyphenatedText = softHyphenateText(para.trim(), viewModel.readerHyphenationEnabled)
+
                             Text(
-                                text = "      " + para.trim(),
+                                text = highlightGlossaryTerms(
+                                    text = "      " + hyphenatedText,
+                                    glossaries = glossaries,
+                                    highlightColor = if (viewModel.readerTheme == "eink") Color.Black else MaterialTheme.colorScheme.primary
+                                ),
                                 style = MaterialTheme.typography.bodyLarge.copy(
                                     fontSize = viewModel.readerFontSize.sp,
                                     lineHeight = (viewModel.readerFontSize * viewModel.readerLineHeight).sp,
                                     fontFamily = selectedFontFamily,
-                                    color = textColor.copy(alpha = paragraphAlpha),
-                                    fontWeight = if (isReadingThisPara) FontWeight.Bold else FontWeight.Normal
+                                    letterSpacing = viewModel.readerLetterSpacing.em,
+                                    color = paragraphTextColor.copy(alpha = paragraphAlpha),
+                                    fontWeight = if (isReadingThisPara) FontWeight.Bold else FontWeight.Normal,
+                                    textAlign = if (viewModel.readerJustificationEnabled) TextAlign.Justify else TextAlign.Start
                                 ),
                                 modifier = textAndStyleModifier
                             )
@@ -816,53 +986,159 @@ fun ReaderScreen(
 
     // --- Dynamic Text Style Controls Dialog ---
     if (showSettingsDialog) {
+        val fontPickerLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.GetContent()
+        ) { uri ->
+            uri?.let {
+                viewModel.importCustomFont(context, it)
+            }
+        }
+
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false },
             title = { Text("Reading Style Options", fontWeight = FontWeight.Bold) },
             text = {
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // Font Sizing control
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
+                    // 1. Background Theme Selector
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
-                            text = "Font Size: ${viewModel.readerFontSize}sp",
+                            text = "Background Theme",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
                         )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            OutlinedButton(
-                                onClick = { viewModel.updateFontSize(viewModel.readerFontSize - 1) },
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.weight(1f)
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(Icons.Default.Remove, contentDescription = "Decrease")
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("A-")
+                                listOf(
+                                    Triple("Auto", "auto", MaterialTheme.colorScheme.background),
+                                    Triple("Pristine", "light", Color(0xFFFCFBF9)),
+                                    Triple("Sepia", "sepia", Color(0xFFF4ECD8))
+                                ).forEach { (name, themeKey, color) ->
+                                    val selected = viewModel.readerTheme == themeKey
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(36.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(color)
+                                            .clickable { viewModel.updateReaderTheme(themeKey) }
+                                            .border(
+                                                width = if (selected) 2.dp else 1.dp,
+                                                color = if (selected) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.3f),
+                                                shape = RoundedCornerShape(8.dp)
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = name,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (themeKey == "light" || themeKey == "sepia" || (themeKey == "auto" && !isDark)) Color.Black else Color.White
+                                            )
+                                        )
+                                    }
+                                }
                             }
-
-                            OutlinedButton(
-                                onClick = { viewModel.updateFontSize(viewModel.readerFontSize + 1) },
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.weight(1f)
+                            
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(Icons.Default.Add, contentDescription = "Increase")
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("A+")
+                                listOf(
+                                    Triple("Charcoal", "charcoal", Color(0xFF2C2C2C)),
+                                    Triple("OLED", "oled", Color(0xFF000000)),
+                                    Triple("E-Ink", "eink", Color(0xFFFFFFFF))
+                                ).forEach { (name, themeKey, color) ->
+                                    val selected = viewModel.readerTheme == themeKey
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(36.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(color)
+                                            .clickable { viewModel.updateReaderTheme(themeKey) }
+                                            .border(
+                                                width = if (selected) 2.dp else 1.dp,
+                                                color = if (selected) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.3f),
+                                                shape = RoundedCornerShape(8.dp)
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = name,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (themeKey == "eink") Color.Black else Color.White
+                                            )
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
 
-                    // Font Family Selector
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
+                    // 2. Font Size Slider
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Font Size: ${viewModel.readerFontSize} sp",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Slider(
+                            value = viewModel.readerFontSize.toFloat(),
+                            onValueChange = { viewModel.updateFontSize(it.toInt()) },
+                            valueRange = 12f..40f,
+                            steps = 28
+                        )
+                    }
+
+                    // 3. Line Spacing Slider
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Line Spacing: ${"%.1f".format(viewModel.readerLineHeight)}x",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Slider(
+                            value = viewModel.readerLineHeight,
+                            onValueChange = { viewModel.updateReaderLineHeight(it) },
+                            valueRange = 1.0f..2.5f
+                        )
+                    }
+
+                    // 4. Paragraph Margin Slider
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Paragraph Padding: ${viewModel.readerMargin} dp",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Slider(
+                            value = viewModel.readerMargin.toFloat(),
+                            onValueChange = { viewModel.updateReaderMargin(it.toInt()) },
+                            valueRange = 8f..48f,
+                            steps = 5
+                        )
+                    }
+
+                    // 5. Letter Spacing Slider
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Letter Spacing: ${"%.2f".format(viewModel.readerLetterSpacing)} em",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Slider(
+                            value = viewModel.readerLetterSpacing,
+                            onValueChange = { viewModel.updateReaderLetterSpacing(it) },
+                            valueRange = -0.05f..0.25f
+                        )
+                    }
+
+                    // 6. Font Family Selector
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
                             text = "Font Style",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
@@ -886,22 +1162,113 @@ fun ReaderScreen(
                                 )
                             }
                         }
+                        
+                        if (viewModel.readerCustomFontPath.isNotEmpty()) {
+                            val selected = viewModel.readerFontFamily == "custom"
+                            FilterChip(
+                                selected = selected,
+                                onClick = { viewModel.updateFontFamily("custom") },
+                                label = { Text("Custom: ${viewModel.readerCustomFontName}") },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = { fontPickerLauncher.launch("*/*") },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Upload, contentDescription = "Upload Font")
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Upload Custom Font (.ttf/.otf)", fontWeight = FontWeight.Bold)
+                        }
                     }
 
-                    // Focus Mode Toggle
                     Divider()
+
+                    // 7. Ambient Light Sensor Sync
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Ambient Light Sync",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Text(
+                                text = "Automatically adapt contrast based on room lighting",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = viewModel.readerAmbientSyncEnabled,
+                            onCheckedChange = { viewModel.updateAmbientSyncEnabled(it) }
+                        )
+                    }
+
+                    // 8. Text Justification
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Text Justification",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Text(
+                                text = "Align text with both left and right margins",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = viewModel.readerJustificationEnabled,
+                            onCheckedChange = { viewModel.updateJustificationEnabled(it) }
+                        )
+                    }
+
+                    // 9. Soft Hyphenation Engine
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Soft Hyphenation Engine",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Text(
+                                text = "Break long words with soft-hyphens for better spacing",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = viewModel.readerHyphenationEnabled,
+                            onCheckedChange = { viewModel.updateHyphenationEnabled(it) }
+                        )
+                    }
+
+                    // 10. Focus Mode Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "Focus Mode",
                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
                             )
                             Text(
-                                text = "Dim non-active paragraphs",
+                                text = "Dim non-active paragraphs during TTS",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -912,14 +1279,13 @@ fun ReaderScreen(
                         )
                     }
 
-                    // Auto-Scroll Toggle
-                    Divider()
+                    // 11. Auto-Scroll Toggle
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "Auto-Follow Spoken Text",
                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
@@ -980,11 +1346,11 @@ fun ReaderScreen(
                         contentDescription = "Bookmark",
                         tint = MaterialTheme.colorScheme.primary
                     )
-                    Text(if (existingBookmark != null) "Edit Bookmark" else "Add Bookmark / Highlight", fontWeight = FontWeight.Bold)
+                    Text(if (existingBookmark != null) "Paragraph Actions" else "Paragraph Actions", fontWeight = FontWeight.Bold)
                 }
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Text(
                         text = selectedParaTextForBookmark,
                         style = MaterialTheme.typography.bodyMedium,
@@ -996,15 +1362,118 @@ fun ReaderScreen(
                             .padding(8.dp)
                     )
                     
-                    OutlinedTextField(
-                        value = bookmarkNoteText,
-                        onValueChange = { bookmarkNoteText = it },
-                        label = { Text("Add Personal Note / Thought") },
-                        placeholder = { Text("Write your thoughts or highlight context here...") },
-                        modifier = Modifier.fillMaxWidth(),
-                        maxLines = 3,
-                        shape = RoundedCornerShape(10.dp)
-                    )
+                    // Quick Action Buttons
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "Actions",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        
+                        // Action 1: Set Reading Position
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                                .clickable {
+                                    scope.launch {
+                                        lazyListState.scrollToItem(selectedParaIndexForBookmark!! + 3)
+                                        viewModel.saveReadingProgress(
+                                            bookId = bookId,
+                                            chapterId = currentChapterId,
+                                            paragraphIndex = selectedParaIndexForBookmark!!
+                                        )
+                                        showBookmarkDialog = false
+                                    }
+                                }
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MenuBook,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Start Reading from Here",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                Text(
+                                    text = "Scroll and resume reading visually from here",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+
+                        // Action 2: Start Speech/TTS from Here
+                        val activeCh = activeChapter
+                        val bk = bookState
+                        if (activeCh != null && bk != null) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        viewModel.speak(
+                                            text = activeCh.content,
+                                            book = bk,
+                                            chapter = activeCh,
+                                            startFromParagraphIndex = selectedParaIndexForBookmark!!
+                                        )
+                                        showBookmarkDialog = false
+                                    }
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayCircle,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Read Aloud from Here (TTS)",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                                    )
+                                    Text(
+                                        text = "Start voice reader narrative from this paragraph",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Divider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Bookmark / Highlight Note",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        OutlinedTextField(
+                            value = bookmarkNoteText,
+                            onValueChange = { bookmarkNoteText = it },
+                            label = { Text("Personal Note / Thought") },
+                            placeholder = { Text("e.g. Important clue, beautiful quote...") },
+                            modifier = Modifier.fillMaxWidth(),
+                            maxLines = 3,
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -1026,7 +1495,7 @@ fun ReaderScreen(
                     },
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text("Save Bookmark")
+                    Text(if (existingBookmark != null) "Update Bookmark" else "Save Bookmark")
                 }
             },
             dismissButton = {
@@ -1384,4 +1853,84 @@ fun FindReplaceDialog(
             }
         }
     )
+}
+
+private fun softHyphenateText(text: String, enabled: Boolean): String {
+    if (!enabled) return text
+    return text.split(" ").joinToString(" ") { word ->
+        if (word.length <= 6) {
+            word
+        } else {
+            val syllables = mutableListOf<String>()
+            var currentSyllable = StringBuilder()
+            val vowels = "aeiouyAEIOUY"
+            
+            var i = 0
+            while (i < word.length) {
+                val char = word[i]
+                currentSyllable.append(char)
+                
+                if (vowels.contains(char)) {
+                    if (i + 2 < word.length && !vowels.contains(word[i + 1]) && vowels.contains(word[i + 2])) {
+                        syllables.add(currentSyllable.toString())
+                        currentSyllable = StringBuilder()
+                    } else if (i + 3 < word.length && !vowels.contains(word[i + 1]) && !vowels.contains(word[i + 2]) && vowels.contains(word[i + 3])) {
+                        currentSyllable.append(word[i + 1])
+                        syllables.add(currentSyllable.toString())
+                        currentSyllable = StringBuilder()
+                        i++
+                    }
+                }
+                i++
+            }
+            if (currentSyllable.isNotEmpty()) {
+                syllables.add(currentSyllable.toString())
+            }
+            if (syllables.size > 1) {
+                syllables.joinToString("\u00AD")
+            } else {
+                word
+            }
+        }
+    }
+}
+
+private fun highlightGlossaryTerms(
+    text: String,
+    glossaries: List<GlossaryEntity>,
+    highlightColor: Color
+): AnnotatedString {
+    if (glossaries.isEmpty()) return AnnotatedString(text)
+    
+    // Sort glossaries descending by length to match longer terms first and avoid partial sub-word matching issues
+    val sortedGlossaries = glossaries.sortedByDescending { it.originalText.length }
+    val annotatedBuilder = AnnotatedString.Builder()
+    
+    var currentIndex = 0
+    while (currentIndex < text.length) {
+        var matchFound = false
+        for (glossary in sortedGlossaries) {
+            val original = glossary.originalText
+            if (original.isNotEmpty() && text.startsWith(original, currentIndex, ignoreCase = true)) {
+                val matchedText = text.substring(currentIndex, currentIndex + original.length)
+                annotatedBuilder.pushStyle(
+                    SpanStyle(
+                        color = highlightColor,
+                        fontWeight = FontWeight.Bold,
+                        background = highlightColor.copy(alpha = 0.15f)
+                    )
+                )
+                annotatedBuilder.append(matchedText)
+                annotatedBuilder.pop()
+                currentIndex += original.length
+                matchFound = true
+                break
+            }
+        }
+        if (!matchFound) {
+            annotatedBuilder.append(text[currentIndex])
+            currentIndex++
+        }
+    }
+    return annotatedBuilder.toAnnotatedString()
 }
