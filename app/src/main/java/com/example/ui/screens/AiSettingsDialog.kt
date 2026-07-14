@@ -20,6 +20,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.ai.DownloadStatus
@@ -221,6 +223,7 @@ fun AiSettingsDialog(
                         var validationResult by remember { mutableStateOf<String?>(null) }
                         var isCurrentlyValidating by remember { mutableStateOf(false) }
                         var wasValidationSuccessful by remember { mutableStateOf<Boolean?>(null) }
+                        var keyVisible by remember { mutableStateOf(false) }
                         
                         OutlinedTextField(
                             value = apiKeyText,
@@ -233,19 +236,31 @@ fun AiSettingsDialog(
                             label = { Text("Gemini API Key") },
                             placeholder = { Text("AIzaSy...") },
                             singleLine = true,
+                            visualTransformation = if (keyVisible) VisualTransformation.None else PasswordVisualTransformation(),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("gemini_api_key_input"),
                             shape = RoundedCornerShape(12.dp),
                             trailingIcon = {
-                                if (apiKeyText.isNotEmpty()) {
-                                    IconButton(onClick = {
-                                        apiKeyText = ""
-                                        viewModel.updateGeminiApiKey("")
-                                        validationResult = null
-                                        wasValidationSuccessful = null
-                                    }) {
-                                        Icon(Icons.Default.Clear, contentDescription = "Clear Key")
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(end = 4.dp)
+                                ) {
+                                    if (apiKeyText.isNotEmpty()) {
+                                        IconButton(onClick = { keyVisible = !keyVisible }) {
+                                            Icon(
+                                                imageVector = if (keyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                                contentDescription = if (keyVisible) "Hide Key" else "Show Key"
+                                            )
+                                        }
+                                        IconButton(onClick = {
+                                            apiKeyText = ""
+                                            viewModel.updateGeminiApiKey("")
+                                            validationResult = null
+                                            wasValidationSuccessful = null
+                                        }) {
+                                            Icon(Icons.Default.Clear, contentDescription = "Clear Key")
+                                        }
                                     }
                                 }
                             }
