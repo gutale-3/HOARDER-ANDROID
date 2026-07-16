@@ -27,5 +27,7 @@ data class ChapterEntity(
     val content: String,
     val isRead: Boolean = false,
     val hash: String,
-    val downloadedAt: Long = System.currentTimeMillis()
+    val downloadedAt: Long = System.currentTimeMillis(),
+    val isArchived: Boolean = false,
+    val readAt: Long? = null
 )

@@ -11,6 +11,7 @@ plugins {
 
 android {
   namespace = "com.example"
+  ndkVersion = "28.0.12433566"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
@@ -59,7 +60,7 @@ android {
   testOptions { unitTests { isIncludeAndroidResources = true } }
   packaging {
     jniLibs {
-      useLegacyPackaging = true
+      useLegacyPackaging = false
       pickFirsts.add("**/libonnxruntime.so")
     }
   }
@@ -123,6 +124,7 @@ dependencies {
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
   implementation(libs.mediapipe.tasks.genai)
+  implementation("androidx.media:media:1.7.0")
   // implementation(libs.onnxruntime.android)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
@@ -145,4 +147,5 @@ dependencies {
   implementation(libs.jsoup)
   implementation(libs.sherpa.onnx)
   implementation(libs.commons.compress)
+  implementation(libs.androidx.graphics.path)
 }

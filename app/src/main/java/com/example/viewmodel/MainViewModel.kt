@@ -10,6 +10,10 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
+import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
+import android.support.v4.media.MediaMetadataCompat
+import androidx.media.app.NotificationCompat.MediaStyle
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.net.Uri
@@ -59,7 +63,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var resumeChapterTitle by mutableStateOf("")
         private set
 
-    var currentTheme by mutableStateOf(AppTheme.IMMERSIVE_UI)
+    var currentTheme by mutableStateOf(AppTheme.CLASSIC_LIGHT)
         private set
 
     var readerFontSize by mutableStateOf(16)
@@ -82,7 +86,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var autoDownloadNextEnabled by mutableStateOf(true)
 
     // --- Reader Settings ---
-    var readerTheme by mutableStateOf("auto") // "light", "dark", "auto"
+    var readerTheme by mutableStateOf("light") // "light", "dark", "auto"
     var readerLineHeight by mutableStateOf(1.4f)
     var readerMargin by mutableStateOf(16) // in dp padding
     var readerLetterSpacing by mutableStateOf(0.0f)
@@ -108,8 +112,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val modelManager = com.example.data.ai.ModelManager(application)
 
     init {
-        val themeName = prefs.getString("selected_theme", AppTheme.IMMERSIVE_UI.name)
-        currentTheme = AppTheme.valueOf(themeName ?: AppTheme.IMMERSIVE_UI.name)
+        val themeName = prefs.getString("selected_theme", AppTheme.CLASSIC_LIGHT.name)
+        currentTheme = AppTheme.valueOf(themeName ?: AppTheme.CLASSIC_LIGHT.name)
         readerFontSize = prefs.getInt("reader_font_size", 18)
         readerFontFamily = prefs.getString("reader_font_family", "serif") ?: "serif"
         defaultUserAgent = prefs.getString("user_agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36") ?: ""
@@ -119,7 +123,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ttsAutoScrollEnabled = prefs.getBoolean("tts_auto_scroll", true)
 
         autoDownloadNextEnabled = prefs.getBoolean("auto_download_next", true)
-        readerTheme = prefs.getString("reader_theme", "auto") ?: "auto"
+        readerTheme = prefs.getString("reader_theme", "light") ?: "light"
         readerLineHeight = prefs.getFloat("reader_line_height", 1.4f)
         readerMargin = prefs.getInt("reader_margin", 16)
         readerLetterSpacing = prefs.getFloat("reader_letter_spacing", 0.0f)
@@ -136,6 +140,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         registerTtsReceiver()
         loadResumableTtsSession()
         scheduleChapterUpdatesCheck()
+        
+        viewModelScope.launch(Dispatchers.IO) {
+            while (true) {
+                checkAndAutoArchiveChapters()
+                kotlinx.coroutines.delay(5 * 60 * 1000) // Run every 5 minutes
+            }
+        }
     }
 
     fun updateGeminiApiKey(key: String) {
@@ -1247,6 +1258,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var isTtsReady by mutableStateOf(false)
     var ttsVoices by mutableStateOf<List<VoiceOption>>(emptyList())
     var selectedVoiceId by mutableStateOf<String>("")
+    var previewingVoiceId by mutableStateOf<String?>(null)
 
     // TTS Playback state
     var ttsPlayingBook by mutableStateOf<BookEntity?>(null)
@@ -1287,14 +1299,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 },
                 onSuccess = {
                     premiumVoiceDownloading = false
-                    setTtsVoice(VoiceOption(voice.id, "Piper - ${voice.name}", Locale.US))
+                    val prefix = if (voice.isKokoro) "Kokoro" else "Piper"
+                    setTtsVoice(VoiceOption(voice.id, "$prefix - ${voice.name}", Locale.US))
                     initTts()
-                    addLog("Piper Voice (${voice.name}) downloaded successfully.")
+                    addLog("$prefix Voice (${voice.name}) downloaded successfully.")
                 },
                 onFailure = { error ->
                     premiumVoiceDownloadError = error
                     premiumVoiceDownloading = false
-                    addLog("Error downloading Piper Voice (${voice.name}): $error")
+                    val prefix = if (voice.isKokoro) "Kokoro" else "Piper"
+                    addLog("Error downloading $prefix Voice (${voice.name}): $error")
                 }
             )
         }
@@ -1309,7 +1323,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 defaultVoice?.let { setTtsVoice(it) }
             }
             initTts()
-            addLog("Piper Voice (${voice.name}) model deleted.")
+            val prefix = if (voice.isKokoro) "Kokoro" else "Piper"
+            addLog("$prefix Voice (${voice.name}) model deleted.")
         }
         sherpaOnnxTtsEngine.selectedVoiceId = selectedVoiceId
     }
@@ -1389,10 +1404,107 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val channelId = "tts_player_channel"
     private val notificationId = 1001
 
+    private var mediaSession: MediaSessionCompat? = null
+
+    fun initMediaSession() {
+        if (mediaSession == null) {
+            val context = getApplication<Application>().applicationContext
+            mediaSession = MediaSessionCompat(context, "NovelHoarderTTS").apply {
+                setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS)
+                setCallback(object : MediaSessionCompat.Callback() {
+                    override fun onPlay() {
+                        viewModelScope.launch(Dispatchers.Main) {
+                            resumeTts()
+                        }
+                    }
+
+                    override fun onPause() {
+                        viewModelScope.launch(Dispatchers.Main) {
+                            pauseTts()
+                        }
+                    }
+
+                    override fun onSkipToNext() {
+                        viewModelScope.launch(Dispatchers.Main) {
+                            playNextChapterTts()
+                        }
+                    }
+
+                    override fun onSkipToPrevious() {
+                        viewModelScope.launch(Dispatchers.Main) {
+                            playPreviousChapterTts()
+                        }
+                    }
+
+                    override fun onStop() {
+                        viewModelScope.launch(Dispatchers.Main) {
+                            stopTts()
+                        }
+                    }
+
+                    override fun onSeekTo(pos: Long) {
+                        viewModelScope.launch(Dispatchers.Main) {
+                            val paraIndex = (pos / 1000L).toInt()
+                            val total = ttsTotalParagraphs
+                            if (paraIndex in 0 until total) {
+                                val book = ttsPlayingBook
+                                val chapter = ttsPlayingChapter
+                                if (book != null && chapter != null) {
+                                    speak(chapter.content, book, chapter, startFromParagraphIndex = paraIndex)
+                                }
+                            }
+                        }
+                    }
+                })
+                isActive = true
+            }
+        }
+    }
+
+    fun updatePlaybackState() {
+        initMediaSession()
+        val state = if (ttsIsPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED
+        val actions = PlaybackStateCompat.ACTION_PLAY or
+                PlaybackStateCompat.ACTION_PAUSE or
+                PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
+                PlaybackStateCompat.ACTION_STOP or
+                PlaybackStateCompat.ACTION_SEEK_TO
+                
+        val para = ttsActiveParagraphIndex ?: 0
+        val total = ttsTotalParagraphs
+        val currentPositionMs = if (para >= 0) para * 1000L else 0L
+
+        val stateBuilder = PlaybackStateCompat.Builder()
+            .setActions(actions)
+            .setState(state, currentPositionMs, 1.0f)
+        
+        mediaSession?.setPlaybackState(stateBuilder.build())
+        
+        val book = ttsPlayingBook
+        val chapter = ttsPlayingChapter
+
+        val metadataBuilder = MediaMetadataCompat.Builder()
+            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, chapter?.title ?: "")
+            .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, book?.title ?: "")
+            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, book?.author ?: "Unknown Author")
+            .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, total * 1000L)
+        
+        if (total > 0 && para >= 0) {
+            val progressSubtitle = "Paragraph ${para + 1} of $total"
+            metadataBuilder.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, progressSubtitle)
+            metadataBuilder.putString(MediaMetadataCompat.METADATA_KEY_AUTHOR, book?.author ?: "Unknown Author")
+        }
+
+        mediaSession?.setMetadata(metadataBuilder.build())
+    }
+
     fun showTtsNotification() {
         val context = getApplication<Application>().applicationContext
         val book = ttsPlayingBook ?: return
         val chapter = ttsPlayingChapter ?: return
+
+        updatePlaybackState()
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
@@ -1445,12 +1557,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val playPauseIcon = if (ttsIsPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
         val playPauseText = if (ttsIsPlaying) "Pause" else "Play"
 
+        val para = ttsActiveParagraphIndex ?: 0
+        val total = ttsTotalParagraphs
+        val contentText = if (total > 0 && para >= 0) {
+            "${chapter.title} • Paragraph ${para + 1} of $total"
+        } else {
+            chapter.title
+        }
+
         val builder = androidx.core.app.NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setSmallIcon(com.example.R.mipmap.ic_launcher)
             .setContentTitle(book.title)
-            .setContentText(chapter.title)
+            .setContentText(contentText)
             .setOngoing(ttsIsPlaying)
             .setContentIntent(openAppPendingIntent)
+            .setVisibility(androidx.core.app.NotificationCompat.VISIBILITY_PUBLIC)
+            .setStyle(androidx.media.app.NotificationCompat.MediaStyle()
+                .setMediaSession(mediaSession?.sessionToken)
+                .setShowActionsInCompactView(0, 1, 2)
+            )
             .addAction(android.R.drawable.ic_media_previous, "Prev Chapter", prevPendingIntent)
             .addAction(playPauseIcon, playPauseText, playPausePendingIntent)
             .addAction(android.R.drawable.ic_media_next, "Next Chapter", nextPendingIntent)
@@ -1478,7 +1603,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 context,
                 ttsReceiver,
                 filter,
-                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+                androidx.core.content.ContextCompat.RECEIVER_EXPORTED
             )
             isReceiverRegistered = true
         }
@@ -1531,7 +1656,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 
                 var finalVoices = availableVoices.distinctBy { it.id }
                 val piperVoiceOptions = PiperVoiceCatalog.ALL_VOICES.map { voice ->
-                    VoiceOption(voice.id, "Piper - ${voice.name}", Locale.US)
+                    val prefix = if (voice.isKokoro) "Kokoro" else "Piper"
+                    VoiceOption(voice.id, "$prefix - ${voice.name}", Locale.US)
                 }
                 finalVoices = piperVoiceOptions + finalVoices
                 ttsVoices = finalVoices
@@ -1560,15 +1686,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun stopVoicePreview() {
+        sherpaOnnxTtsEngine.stop()
+        tts?.stop()
+        previewingVoiceId = null
+    }
+
     fun playVoicePreview(voiceOption: VoiceOption) {
-        val sampleText = "Hello! This is a sample of the ${voiceOption.name.replace("Piper - ", "").replace("System: ", "")} voice."
-        val isPiper = voiceOption.id.startsWith("vits-piper-")
-        val piperVoice = if (isPiper) com.example.data.ai.PiperVoiceCatalog.getVoiceById(voiceOption.id) else null
+        val cleanName = voiceOption.name.replace("Piper - ", "").replace("Kokoro - ", "").replace("System: ", "")
+        val sampleText = "Hello! This is a sample of the $cleanName voice."
+        val isSherpa = voiceOption.id.startsWith("vits-piper-") || voiceOption.id.startsWith("kokoro-")
+        val piperVoice = if (isSherpa) com.example.data.ai.PiperVoiceCatalog.getVoiceById(voiceOption.id) else null
         val isDownloaded = piperVoice != null && isVoiceDownloaded(piperVoice)
 
-        if (isPiper && isDownloaded) {
+        stopVoicePreview()
+
+        if (isSherpa && isDownloaded) {
             viewModelScope.launch(Dispatchers.Main) {
-                tts?.stop()
+                previewingVoiceId = voiceOption.id
                 sherpaOnnxTtsEngine.selectedVoiceId = voiceOption.id
                 sherpaOnnxTtsEngine.selectedSpeakerId = getSpeakerId(voiceOption.id)
                 sherpaOnnxTtsEngine.initOnnx()
@@ -1576,14 +1711,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     text = sampleText,
                     speed = ttsSpeed,
                     pitch = ttsPitch,
-                    onStart = { },
-                    onDone = { }
+                    onStart = {
+                        viewModelScope.launch(Dispatchers.Main) {
+                            previewingVoiceId = voiceOption.id
+                        }
+                    },
+                    onDone = {
+                        viewModelScope.launch(Dispatchers.Main) {
+                            if (previewingVoiceId == voiceOption.id) {
+                                previewingVoiceId = null
+                            }
+                        }
+                    },
+                    onError = { _ ->
+                        viewModelScope.launch(Dispatchers.Main) {
+                            if (previewingVoiceId == voiceOption.id) {
+                                previewingVoiceId = null
+                            }
+                        }
+                    }
                 )
             }
-        } else if (!isPiper) {
+        } else if (!isSherpa) {
             initTts {
                 viewModelScope.launch(Dispatchers.Main) {
-                    tts?.stop()
+                    previewingVoiceId = voiceOption.id
                     val rawVoices = tts?.voices
                     val actualVoice = rawVoices?.find { it.name == voiceOption.id }
                     if (actualVoice != null) {
@@ -1593,6 +1745,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     tts?.setPitch(ttsPitch)
                     tts?.setSpeechRate(ttsSpeed)
+                    
+                    tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                        override fun onStart(utteranceId: String?) {
+                            viewModelScope.launch(Dispatchers.Main) {
+                                previewingVoiceId = voiceOption.id
+                            }
+                        }
+                        override fun onDone(utteranceId: String?) {
+                            viewModelScope.launch(Dispatchers.Main) {
+                                if (previewingVoiceId == voiceOption.id) {
+                                    previewingVoiceId = null
+                                }
+                            }
+                        }
+                        override fun onError(utteranceId: String?) {
+                            viewModelScope.launch(Dispatchers.Main) {
+                                if (previewingVoiceId == voiceOption.id) {
+                                    previewingVoiceId = null
+                                }
+                            }
+                        }
+                    })
+                    
                     tts?.speak(sampleText, TextToSpeech.QUEUE_FLUSH, null, "preview_${voiceOption.id}")
                 }
             }
@@ -1602,7 +1777,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setTtsVoice(voiceOption: VoiceOption) {
         selectedVoiceId = voiceOption.id
         prefs.edit().putString("tts_selected_voice", voiceOption.id).apply()
-        if (voiceOption.id.startsWith("vits-piper-")) {
+        if (voiceOption.id.startsWith("vits-piper-") || voiceOption.id.startsWith("kokoro-")) {
             sherpaOnnxTtsEngine.selectedVoiceId = voiceOption.id
             sherpaOnnxTtsEngine.selectedSpeakerId = getSpeakerId(voiceOption.id)
         } else if (voiceOption.id.startsWith("default_")) {
@@ -1657,6 +1832,90 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateChaptersArchiveStatus(chapterIds: List<String>, isArchived: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateChaptersArchiveStatus(chapterIds, isArchived)
+            addLog("Successfully ${if (isArchived) "archived" else "unarchived"} ${chapterIds.size} chapters.")
+        }
+    }
+
+    fun updateBookAutoArchiveHours(bookId: String, hours: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val book = repository.getBook(bookId)
+            if (book != null) {
+                val updatedBook = book.copy(autoArchiveHours = hours)
+                repository.updateBook(updatedBook)
+                addLog("Updated auto-archive setting for ${book.title} to: ${if (hours == 0) "Never" else "$hours hours"}")
+                checkAndAutoArchiveChapters()
+            }
+        }
+    }
+
+    fun getArchivedChaptersFlow(bookId: String): Flow<List<ChapterEntity>> {
+        return repository.getArchivedChaptersFlow(bookId)
+    }
+
+    fun checkAndAutoArchiveChapters() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val books = repository.getAllBooks()
+                books.forEach { book ->
+                    val hours = book.autoArchiveHours
+                    if (hours > 0) {
+                        val chapters = repository.getChapters(book.id)
+                        val now = System.currentTimeMillis()
+                        val chaptersToArchive = chapters.filter { ch ->
+                            ch.isRead && !ch.isArchived && ch.readAt != null && (now - ch.readAt) >= (hours.toLong() * 60 * 60 * 1000)
+                        }
+                        if (chaptersToArchive.isNotEmpty()) {
+                            val ids = chaptersToArchive.map { it.id }
+                            repository.updateChaptersArchiveStatus(ids, true)
+                            addLog("Auto-archived ${ids.size} read chapters for book: ${book.title}")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                addLog("Error in auto-archiving: ${e.message}")
+            }
+        }
+    }
+
+    fun deleteChapters(bookId: String, chapterIds: List<String>, onComplete: (String) -> Unit = {}) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Delete actual chapters from Room
+                repository.deleteChapters(chapterIds)
+                
+                // Recalculate total chapters for this book
+                val newCount = repository.getChapterCount(bookId)
+                val book = repository.getBook(bookId)
+                if (book != null) {
+                    val updatedBook = book.copy(
+                        totalChapters = newCount,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                    repository.updateBook(updatedBook)
+                }
+                
+                // Clean up polished chapters and recaps
+                chapterIds.forEach { chId ->
+                    repository.deletePolishedChapter(chId)
+                    repository.deleteChapterRecap(chId)
+                }
+                
+                withContext(Dispatchers.Main) {
+                    addLog("Successfully deleted ${chapterIds.size} chapters from Book $bookId")
+                    onComplete("Deleted ${chapterIds.size} chapters successfully")
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    addLog("Error deleting chapters: ${e.message}")
+                    onComplete("Error deleting chapters: ${e.message}")
+                }
+            }
+        }
+    }
+
     fun startTtsForBook(book: BookEntity) {
         viewModelScope.launch(Dispatchers.IO) {
             val chapters = repository.getChapters(book.id)
@@ -1687,6 +1946,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .putInt("tts_resume_para", para)
             .putBoolean("tts_was_playing", ttsIsPlaying)
             .apply()
+
+        // Sync with reading progress so that opening the novel directly resumes where TTS is or was speaking
+        saveReadingProgress(book.id, chapter.id, if (para < 0) 0 else para)
+
+        // Make sure the lastReadChapterId matches
+        if (book.lastReadChapterId != chapter.id) {
+            viewModelScope.launch(Dispatchers.IO) {
+                repository.updateBook(book.copy(lastReadChapterId = chapter.id))
+            }
+        }
+
+        // Keep system notification and MediaSession API updated in real time as paragraphs change
+        showTtsNotification()
     }
 
     fun clearTtsProgress() {
@@ -1763,6 +2035,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun speak(text: String, book: BookEntity, chapter: ChapterEntity, startFromParagraphIndex: Int = -1) {
+        isTtsPlayerBarMinimized = false
         // Save chapter progress & mark chapter as read
         viewModelScope.launch(Dispatchers.IO) {
             val updatedBook = book.copy(lastReadChapterId = chapter.id)
@@ -1770,11 +2043,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             repository.updateChapterReadStatus(chapter.id, true)
         }
 
-        val isPiper = selectedVoiceId.startsWith("vits-piper-")
-        val piperVoice = if (isPiper) PiperVoiceCatalog.getVoiceById(selectedVoiceId) else null
+        val isSherpa = selectedVoiceId.startsWith("vits-piper-") || selectedVoiceId.startsWith("kokoro-")
+        val piperVoice = if (isSherpa) PiperVoiceCatalog.getVoiceById(selectedVoiceId) else null
         val isDownloaded = piperVoice != null && isVoiceDownloaded(piperVoice)
 
-        if (isPiper && isDownloaded) {
+        if (isSherpa && isDownloaded) {
             viewModelScope.launch(Dispatchers.Main) {
                 ttsPlayingBook = book
                 ttsPlayingChapter = chapter
@@ -1823,6 +2096,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         viewModelScope.launch(Dispatchers.Main) {
                             playNextChapterTts()
                         }
+                    },
+                    onError = { errorMsg ->
+                        viewModelScope.launch(Dispatchers.Main) {
+                            addLog("Piper TTS Error: $errorMsg")
+                            stopTts()
+                        }
                     }
                 )
 
@@ -1831,12 +2110,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        ttsPlayingBook = book
+        ttsPlayingChapter = chapter
+        ttsIsPlaying = true
+        ttsIsPaused = false
+
         initTts {
             viewModelScope.launch(Dispatchers.Main) {
-                ttsPlayingBook = book
-                ttsPlayingChapter = chapter
-                ttsIsPlaying = true
-                ttsIsPaused = false
+                if (!ttsIsPlaying || ttsPlayingChapter?.id != chapter.id) {
+                    return@launch
+                }
 
                 tts?.setPitch(ttsPitch)
                 tts?.setSpeechRate(ttsSpeed)
@@ -1906,6 +2189,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playNextChapterTts() {
+        if (!ttsIsPlaying) return
         val book = ttsPlayingBook ?: return
         val currentChapter = ttsPlayingChapter ?: return
 
@@ -1946,18 +2230,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun pauseTts() {
-        if (ttsIsPlaying) {
-            if (selectedVoiceId.startsWith("vits-piper-")) {
-                sherpaOnnxTtsEngine.stop()
-            } else {
-                tts?.stop()
-            }
-            ttsIsPlaying = false
-            ttsIsPaused = true
-            showTtsNotification()
-            saveTtsProgress()
-            loadResumableTtsSession()
-        }
+        sherpaOnnxTtsEngine.stop()
+        tts?.stop()
+        ttsIsPlaying = false
+        ttsIsPaused = true
+        showTtsNotification()
+        saveTtsProgress()
+        loadResumableTtsSession()
     }
 
     fun resumeTts() {
@@ -1967,11 +2246,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopTts() {
-        if (selectedVoiceId.startsWith("vits-piper-")) {
-            sherpaOnnxTtsEngine.stop()
-        } else {
-            tts?.stop()
-        }
+        sherpaOnnxTtsEngine.stop()
+        tts?.stop()
         ttsPlayingBook = null
         ttsPlayingChapter = null
         ttsIsPlaying = false
@@ -1980,6 +2256,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         dismissTtsNotification()
         clearTtsProgress()
         hasResumableSession = false
+
+        mediaSession?.apply {
+            isActive = false
+            release()
+        }
+        mediaSession = null
     }
 
     private fun downloadCoverAndSaveMetadata(book: BookEntity, cookies: String): BookEntity {
@@ -2708,7 +2990,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // --- Import Local File ---
-    fun importLocalFile(context: Context, uri: Uri, isEpub: Boolean, onResult: (Boolean, String) -> Unit) {
+    fun importLocalFile(context: Context, uri: Uri, isEpub: Boolean, customUrl: String? = null, onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             val result = if (isEpub) {
                 com.example.util.EpubImporter.importEpub(context, uri)
@@ -2717,7 +2999,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             
             if (result != null) {
-                repository.insertBook(result.first)
+                val finalUrl = if (!customUrl.isNullOrBlank()) customUrl.trim() else result.first.url
+                val updatedBook = result.first.copy(url = finalUrl)
+                repository.insertBook(updatedBook)
                 repository.insertChapters(result.second)
                 withContext(Dispatchers.Main) {
                     onResult(true, "Imported \"${result.first.title}\" with ${result.second.size} chapters!")
@@ -2725,6 +3009,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 withContext(Dispatchers.Main) {
                     onResult(false, "Failed to parse local book file. Ensure the format is valid.")
+                }
+            }
+        }
+    }
+
+    // --- Update Book Details (Cover, Author, Title, URL) ---
+    fun updateBookDetails(
+        bookId: String,
+        newTitle: String,
+        newAuthor: String,
+        newUrl: String,
+        newCoverUrl: String?,
+        newCoverLocalPath: String?,
+        onResult: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val book = repository.getBook(bookId)
+            if (book != null) {
+                val updatedBook = book.copy(
+                    title = newTitle.trim(),
+                    author = newAuthor.trim(),
+                    url = if (newUrl.isNotBlank()) newUrl.trim() else book.url,
+                    coverUrl = newCoverUrl?.trim()?.ifEmpty { null },
+                    coverLocalPath = newCoverLocalPath?.trim()?.ifEmpty { null },
+                    updatedAt = System.currentTimeMillis()
+                )
+                repository.insertBook(updatedBook)
+                withContext(Dispatchers.Main) {
+                    onResult(true, "Novel details updated successfully!")
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    onResult(false, "Novel not found.")
                 }
             }
         }
@@ -2856,6 +3173,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         unregisterTtsReceiver()
         dismissTtsNotification()
         sleepTimerJob?.cancel()
+        mediaSession?.apply {
+            isActive = false
+            release()
+        }
+        mediaSession = null
     }
 }
 

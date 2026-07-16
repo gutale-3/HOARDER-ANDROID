@@ -26,6 +26,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.BookEntity
@@ -70,18 +72,56 @@ fun LibraryScreen(
         }
     }
 
+    // Configure Import state
+    var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
+    var pendingImportIsEpub by remember { mutableStateOf(false) }
+    var showConfigureImportDialog by remember { mutableStateOf(false) }
+    var importCustomUrl by remember { mutableStateOf("") }
+
+    // Edit Book state
+    var showEditDetailsDialog by remember { mutableStateOf(false) }
+    var activeEditBook by remember { mutableStateOf<BookEntity?>(null) }
+    var editTitle by remember { mutableStateOf("") }
+    var editAuthor by remember { mutableStateOf("") }
+    var editUrl by remember { mutableStateOf("") }
+    var editCoverUrl by remember { mutableStateOf("") }
+    var editCoverLocalPath by remember { mutableStateOf("") }
+
+    val scope = rememberCoroutineScope()
+
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            importProgressMessage = "Importing local file... Please wait..."
-            showImportProgressDialog = true
             val isEpub = uri.toString().endsWith(".epub", ignoreCase = true) || 
                          (context.contentResolver.getType(uri)?.contains("epub") == true)
-            viewModel.importLocalFile(context, uri, isEpub = isEpub) { success, msg ->
-                showImportProgressDialog = false
-                importStatusMessage = msg
-                showImportStatusDialog = true
+            pendingImportUri = uri
+            pendingImportIsEpub = isEpub
+            importCustomUrl = ""
+            showConfigureImportDialog = true
+        }
+    }
+
+    val coverImageLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val inputStream = context.contentResolver.openInputStream(uri)
+                    if (inputStream != null) {
+                        val coversDir = File(context.filesDir, "covers")
+                        if (!coversDir.exists()) coversDir.mkdirs()
+                        val localFile = File(coversDir, "custom_${System.currentTimeMillis()}.jpg")
+                        localFile.outputStream().use { outputStream ->
+                            inputStream.copyTo(outputStream)
+                        }
+                        inputStream.close()
+                        editCoverLocalPath = localFile.absolutePath
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
         }
     }
@@ -411,7 +451,16 @@ fun LibraryScreen(
                                 selectedBookIds + book.id
                             }
                         },
-                        unreadCount = unreadCounts[book.id] ?: 0
+                        unreadCount = unreadCounts[book.id] ?: 0,
+                        onEditDetails = {
+                            activeEditBook = book
+                            editTitle = book.title
+                            editAuthor = book.author
+                            editUrl = if (book.url.startsWith("local://")) "" else book.url
+                            editCoverUrl = book.coverUrl ?: ""
+                            editCoverLocalPath = book.coverLocalPath ?: ""
+                            showEditDetailsDialog = true
+                        }
                     )
                 }
             }
@@ -534,6 +583,208 @@ fun LibraryScreen(
         )
     }
 
+    // --- Configure Import Dialog ---
+    if (showConfigureImportDialog && pendingImportUri != null) {
+        AlertDialog(
+            onDismissRequest = { showConfigureImportDialog = false },
+            title = { Text("Configure Local Import") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "You are importing a local book file. To enable future chapter updates, re-scraping, or automatic chapter syncing in the future, you can optionally provide its online source URL below.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    OutlinedTextField(
+                        value = importCustomUrl,
+                        onValueChange = { importCustomUrl = it },
+                        label = { Text("Novel Source URL (Optional)") },
+                        placeholder = { Text("https://tomatomtl.com/books/...") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+                    Text(
+                        text = "If left empty, the book will be imported purely as a local offline file.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val uri = pendingImportUri!!
+                        val isEpub = pendingImportIsEpub
+                        val customUrl = importCustomUrl.trim().ifEmpty { null }
+                        showConfigureImportDialog = false
+                        importProgressMessage = "Importing local file... Please wait..."
+                        showImportProgressDialog = true
+                        viewModel.importLocalFile(context, uri, isEpub = isEpub, customUrl = customUrl) { success, msg ->
+                            showImportProgressDialog = false
+                            importStatusMessage = msg
+                            showImportStatusDialog = true
+                        }
+                    }
+                ) {
+                    Text("Import")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfigureImportDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // --- Edit Novel Details Dialog ---
+    if (showEditDetailsDialog && activeEditBook != null) {
+        AlertDialog(
+            onDismissRequest = { showEditDetailsDialog = false },
+            title = { Text("Edit Novel Details") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedTextField(
+                        value = editTitle,
+                        onValueChange = { editTitle = it },
+                        label = { Text("Title") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+
+                    OutlinedTextField(
+                        value = editAuthor,
+                        onValueChange = { editAuthor = it },
+                        label = { Text("Author") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+
+                    OutlinedTextField(
+                        value = editUrl,
+                        onValueChange = { editUrl = it },
+                        label = { Text("Source Scraping URL") },
+                        placeholder = { Text("https://tomatomtl.com/books/...") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+
+                    Divider()
+
+                    Text(
+                        text = "Novel Cover Image",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                    )
+
+                    // Display current image or temporary edited image
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val coverModel = if (editCoverLocalPath.isNotEmpty()) {
+                            File(editCoverLocalPath)
+                        } else if (editCoverUrl.isNotEmpty()) {
+                            editCoverUrl
+                        } else {
+                            null
+                        }
+
+                        if (coverModel != null) {
+                            AsyncImage(
+                                model = coverModel,
+                                contentDescription = "Cover preview",
+                                modifier = Modifier
+                                    .size(width = 60.dp, height = 84.dp)
+                                    .clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 60.dp, height = 84.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Image, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Button(
+                                onClick = { coverImageLauncher.launch("image/*") },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Pick Gallery Image", fontSize = 12.sp)
+                            }
+
+                            if (editCoverLocalPath.isNotEmpty()) {
+                                TextButton(
+                                    onClick = { editCoverLocalPath = "" },
+                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                ) {
+                                    Text("Reset Local Photo", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = editCoverUrl,
+                        onValueChange = { editCoverUrl = it },
+                        label = { Text("Cover Image URL (Fallback)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val bookId = activeEditBook!!.id
+                        viewModel.updateBookDetails(
+                            bookId = bookId,
+                            newTitle = editTitle,
+                            newAuthor = editAuthor,
+                            newUrl = editUrl,
+                            newCoverUrl = editCoverUrl.ifBlank { null },
+                            newCoverLocalPath = editCoverLocalPath.ifBlank { null }
+                        ) { success, msg ->
+                            showEditDetailsDialog = false
+                            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                ) {
+                    Text("Save Changes")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditDetailsDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     // --- Custom Glossary Dialog ---
     if (showGlossaryDialog && activeGlossaryBook != null) {
         GlossaryManagerDialog(
@@ -600,6 +851,7 @@ fun LibraryBookItem(
     isSelected: Boolean = false,
     onToggleSelect: () -> Unit = {},
     unreadCount: Int = 0,
+    onEditDetails: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var expandedMenu by remember { mutableStateOf(false) }
@@ -607,6 +859,7 @@ fun LibraryBookItem(
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .clickable(enabled = !isBatchMode) { onRead() }
             .testTag("library_book_card_${book.id}"),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
@@ -759,6 +1012,14 @@ fun LibraryBookItem(
                                     },
                                     leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) }
                                 )
+                                DropdownMenuItem(
+                                    text = { Text("Edit Novel Details") },
+                                    onClick = {
+                                        expandedMenu = false
+                                        onEditDetails()
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                                )
                                 Divider()
                                 DropdownMenuItem(
                                     text = { Text("Delete Novel", color = MaterialTheme.colorScheme.error) },
@@ -830,6 +1091,47 @@ fun LibraryBookItem(
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
+            }
+
+            // Reading progress percentage & bar
+            val readChapters = (book.totalChapters - unreadCount).coerceAtLeast(0)
+            val progressPercent = if (book.totalChapters > 0) {
+                (readChapters.toFloat() / book.totalChapters * 100).toInt().coerceIn(0, 100)
+            } else {
+                0
+            }
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Reading Progress: $progressPercent%",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Medium
+                        )
+                    )
+                    Text(
+                        text = "$readChapters/${book.totalChapters} Read",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    )
+                }
+                LinearProgressIndicator(
+                    progress = if (book.totalChapters > 0) readChapters.toFloat() / book.totalChapters else 0f,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.outlineVariant
+                )
             }
 
             // Symmetric Action Buttons Row

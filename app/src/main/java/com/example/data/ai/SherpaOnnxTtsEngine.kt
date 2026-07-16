@@ -8,6 +8,7 @@ import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig
 import kotlinx.coroutines.*
 import java.io.File
 
@@ -46,18 +47,33 @@ class SherpaOnnxTtsEngine(private val context: Context) {
             val tokensPath = File(voiceDir, voice.tokensFilename).absolutePath
             val dataDir = File(voiceDir, "espeak-ng-data").absolutePath
             
-            val vitsConfig = OfflineTtsVitsModelConfig(
-                model = modelPath,
-                tokens = tokensPath,
-                dataDir = dataDir,
-                lengthScale = 1.0f // Speed is controlled at generation time
-            )
-            
-            val modelConfig = OfflineTtsModelConfig(
-                vits = vitsConfig,
-                numThreads = 2,
-                provider = "cpu"
-            )
+            val modelConfig = if (voice.isKokoro) {
+                val voicesPath = File(voiceDir, voice.voicesFilename).absolutePath
+                val kokoroConfig = OfflineTtsKokoroModelConfig(
+                    model = modelPath,
+                    voices = voicesPath,
+                    tokens = tokensPath,
+                    dataDir = dataDir,
+                    lengthScale = 1.0f
+                )
+                OfflineTtsModelConfig(
+                    kokoro = kokoroConfig,
+                    numThreads = 2,
+                    provider = "cpu"
+                )
+            } else {
+                val vitsConfig = OfflineTtsVitsModelConfig(
+                    model = modelPath,
+                    tokens = tokensPath,
+                    dataDir = dataDir,
+                    lengthScale = 1.0f // Speed is controlled at generation time
+                )
+                OfflineTtsModelConfig(
+                    vits = vitsConfig,
+                    numThreads = 2,
+                    provider = "cpu"
+                )
+            }
             
             val config = OfflineTtsConfig(
                 model = modelConfig,
@@ -119,17 +135,26 @@ class SherpaOnnxTtsEngine(private val context: Context) {
         speed: Float,
         pitch: Float, // Pitch is ignored as Piper uses lengthScale for speed
         onStart: (Int) -> Unit,
-        onDone: () -> Unit
+        onDone: () -> Unit,
+        onError: ((String) -> Unit)? = null
     ) {
-        stop()
+        val oldJob = activeJob
+        isPlaying = false
+        oldJob?.cancel()
         
         isPlaying = true
         activeJob = scope.launch {
+            try {
+                oldJob?.join()
+            } catch (e: Exception) {
+                // ignore
+            }
+            
             val voice = PiperVoiceCatalog.getVoiceById(selectedVoiceId)
             val tts = initEngine(voice)
             if (tts == null) {
                 withContext(Dispatchers.Main) {
-                    onDone()
+                    onError?.invoke("Model not downloaded or failed to load")
                 }
                 return@launch
             }
@@ -141,7 +166,7 @@ class SherpaOnnxTtsEngine(private val context: Context) {
             
             try {
                 for (idx in paragraphs.indices) {
-                    if (!isPlaying) break
+                    if (!isPlaying || !isActive) break
                     
                     // Callback that paragraph is starting
                     withContext(Dispatchers.Main) {
@@ -151,29 +176,31 @@ class SherpaOnnxTtsEngine(private val context: Context) {
                     val paraText = paragraphs[idx]
                     
                     // Generate audio for the paragraph
-                    // Note: lengthScale (speed) in Piper works inversely: 1.0/speed
+                    // Note: lengthScale (speed) works inversely: 1.0/speed
                     val lengthScale = if (speed > 0) 1.0f / speed else 1.0f
                     val audio = tts.generate(
                         text = paraText,
-                        sid = selectedSpeakerId,
+                        sid = if (voice.isKokoro) voice.kokoroSpeakerId else selectedSpeakerId,
                         speed = lengthScale
                     )
                     
-                    if (!isPlaying) break
+                    if (!isPlaying || !isActive) break
                     
                     // Play the generated audio samples
                     playSamples(audio.samples, audio.sampleRate)
                 }
                 
-                if (isPlaying) {
+                if (isPlaying && isActive) {
                     withContext(Dispatchers.Main) {
                         onDone()
                     }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                withContext(Dispatchers.Main) {
-                    onDone()
+                if (isActive) {
+                    withContext(Dispatchers.Main) {
+                        onError?.invoke(e.message ?: "Speech generation failed")
+                    }
                 }
             } finally {
                 isPlaying = false
@@ -209,7 +236,7 @@ class SherpaOnnxTtsEngine(private val context: Context) {
             // Write audio samples in small chunks to support fast stop/interruption
             val chunkSize = 8192
             var offset = 0
-            while (offset < samples.size && isPlaying) {
+            while (offset < samples.size && isPlaying && isActive) {
                 val len = minOf(chunkSize, samples.size - offset)
                 track.write(samples, offset, len, AudioTrack.WRITE_BLOCKING)
                 offset += len

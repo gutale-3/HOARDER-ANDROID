@@ -11,10 +11,73 @@ data class PiperVoice(
     val tarBz2Url: String,
     val folderName: String,
     val modelFilename: String, // e.g., "en_US-amy-low.onnx"
-    val tokensFilename: String = "tokens.txt"
+    val tokensFilename: String = "tokens.txt",
+    val isKokoro: Boolean = false,
+    val kokoroSpeakerId: Int = 0,
+    val voicesFilename: String = "voices.bin"
 )
 
 object PiperVoiceCatalog {
+    val KOKORO_BELLA = PiperVoice(
+        id = "kokoro-en-bella",
+        name = "Bella",
+        language = "English",
+        accent = "American",
+        gender = "Female",
+        description = "Kokoro high-quality female voice (Bella). Extremely clear and natural.",
+        sizeMb = 82,
+        tarBz2Url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0.19.tar.bz2",
+        folderName = "kokoro-en-v0.19",
+        modelFilename = "model.onnx",
+        isKokoro = true,
+        kokoroSpeakerId = 0
+    )
+
+    val KOKORO_SARAH = PiperVoice(
+        id = "kokoro-en-sarah",
+        name = "Sarah",
+        language = "English",
+        accent = "American",
+        gender = "Female",
+        description = "Kokoro high-quality female voice (Sarah). Smooth and melodic.",
+        sizeMb = 82,
+        tarBz2Url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0.19.tar.bz2",
+        folderName = "kokoro-en-v0.19",
+        modelFilename = "model.onnx",
+        isKokoro = true,
+        kokoroSpeakerId = 1
+    )
+
+    val KOKORO_ADAM = PiperVoice(
+        id = "kokoro-en-adam",
+        name = "Adam",
+        language = "English",
+        accent = "American",
+        gender = "Male",
+        description = "Kokoro high-quality male voice (Adam). Deep, articulate, and professional.",
+        sizeMb = 82,
+        tarBz2Url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0.19.tar.bz2",
+        folderName = "kokoro-en-v0.19",
+        modelFilename = "model.onnx",
+        isKokoro = true,
+        kokoroSpeakerId = 2
+    )
+
+    val KOKORO_MICHAEL = PiperVoice(
+        id = "kokoro-en-michael",
+        name = "Michael",
+        language = "English",
+        accent = "American",
+        gender = "Male",
+        description = "Kokoro high-quality male voice (Michael). Warm, inviting, and rich narrator.",
+        sizeMb = 82,
+        tarBz2Url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0.19.tar.bz2",
+        folderName = "kokoro-en-v0.19",
+        modelFilename = "model.onnx",
+        isKokoro = true,
+        kokoroSpeakerId = 3
+    )
+
     val AMY_LOW = PiperVoice(
         id = "vits-piper-en_US-amy-low",
         name = "Amy (Low)",
@@ -67,7 +130,10 @@ object PiperVoiceCatalog {
         modelFilename = "en_US-libritts_r-medium.onnx"
     )
 
-    val ALL_VOICES = listOf(AMY_LOW, RYAN_MEDIUM, ALAN_MEDIUM, LIBRITTS_MEDIUM)
+    val ALL_VOICES = listOf(
+        KOKORO_BELLA, KOKORO_SARAH, KOKORO_ADAM, KOKORO_MICHAEL,
+        AMY_LOW, RYAN_MEDIUM, ALAN_MEDIUM, LIBRITTS_MEDIUM
+    )
 
     fun getVoiceById(id: String): PiperVoice {
         return ALL_VOICES.find { it.id == id } ?: AMY_LOW

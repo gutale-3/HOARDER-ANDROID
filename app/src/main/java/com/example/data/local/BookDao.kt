@@ -64,11 +64,17 @@ interface BookDao {
     suspend fun getBookCount(): Int
 
     // --- Chapters ---
-    @Query("SELECT * FROM chapters WHERE bookId = :bookId ORDER BY chapterNumber ASC")
+    @Query("SELECT * FROM chapters WHERE bookId = :bookId AND isArchived = 0 ORDER BY chapterNumber ASC")
     fun getChaptersForBookFlow(bookId: String): Flow<List<ChapterEntity>>
 
-    @Query("SELECT * FROM chapters WHERE bookId = :bookId ORDER BY chapterNumber ASC")
+    @Query("SELECT * FROM chapters WHERE bookId = :bookId AND isArchived = 0 ORDER BY chapterNumber ASC")
     suspend fun getChaptersForBook(bookId: String): List<ChapterEntity>
+
+    @Query("SELECT * FROM chapters WHERE bookId = :bookId AND isArchived = 1 ORDER BY chapterNumber ASC")
+    fun getArchivedChaptersForBookFlow(bookId: String): Flow<List<ChapterEntity>>
+
+    @Query("SELECT * FROM chapters WHERE bookId = :bookId AND isArchived = 1 ORDER BY chapterNumber ASC")
+    suspend fun getArchivedChaptersForBook(bookId: String): List<ChapterEntity>
 
     @Query("SELECT * FROM chapters WHERE id = :id")
     suspend fun getChapterById(id: String): ChapterEntity?
@@ -82,11 +88,23 @@ interface BookDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertChapter(chapter: ChapterEntity)
 
-    @Query("UPDATE chapters SET isRead = :isRead WHERE id = :chapterId")
-    suspend fun updateChapterReadStatus(chapterId: String, isRead: Boolean)
+    @Query("UPDATE chapters SET isRead = :isRead, readAt = :readAt WHERE id = :chapterId")
+    suspend fun updateChapterReadStatus(chapterId: String, isRead: Boolean, readAt: Long?)
 
-    @Query("UPDATE chapters SET isRead = :isRead WHERE id IN (:chapterIds)")
-    suspend fun updateChaptersReadStatus(chapterIds: List<String>, isRead: Boolean)
+    @Query("UPDATE chapters SET isRead = :isRead, readAt = :readAt WHERE id IN (:chapterIds)")
+    suspend fun updateChaptersReadStatus(chapterIds: List<String>, isRead: Boolean, readAt: Long?)
+
+    @Query("UPDATE chapters SET isArchived = :isArchived WHERE id = :chapterId")
+    suspend fun updateChapterArchiveStatus(chapterId: String, isArchived: Boolean)
+
+    @Query("UPDATE chapters SET isArchived = :isArchived WHERE id IN (:chapterIds)")
+    suspend fun updateChaptersArchiveStatus(chapterIds: List<String>, isArchived: Boolean)
+
+    @Query("DELETE FROM chapters WHERE id = :id")
+    suspend fun deleteChapterById(id: String)
+
+    @Query("DELETE FROM chapters WHERE id IN (:ids)")
+    suspend fun deleteChaptersByIds(ids: List<String>)
 
     @Query("SELECT COUNT(*) FROM chapters WHERE bookId = :bookId")
     suspend fun getChapterCountForBook(bookId: String): Int

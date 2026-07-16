@@ -27,6 +27,10 @@ class NovelRepository(private val bookDao: BookDao) {
 
     suspend fun getChapters(bookId: String): List<ChapterEntity> = bookDao.getChaptersForBook(bookId)
 
+    fun getArchivedChaptersFlow(bookId: String): Flow<List<ChapterEntity>> = bookDao.getArchivedChaptersForBookFlow(bookId)
+
+    suspend fun getArchivedChapters(bookId: String): List<ChapterEntity> = bookDao.getArchivedChaptersForBook(bookId)
+
     suspend fun getChapter(id: String): ChapterEntity? = bookDao.getChapterById(id)
 
     fun getChapterFlow(id: String): Flow<ChapterEntity?> = bookDao.getChapterByIdFlow(id)
@@ -35,9 +39,17 @@ class NovelRepository(private val bookDao: BookDao) {
 
     suspend fun insertChapters(chapters: List<ChapterEntity>) = bookDao.insertChapters(chapters)
 
-    suspend fun updateChapterReadStatus(chapterId: String, isRead: Boolean) = bookDao.updateChapterReadStatus(chapterId, isRead)
+    suspend fun updateChapterReadStatus(chapterId: String, isRead: Boolean, readAt: Long? = if (isRead) System.currentTimeMillis() else null) = bookDao.updateChapterReadStatus(chapterId, isRead, readAt)
 
-    suspend fun updateChaptersReadStatus(chapterIds: List<String>, isRead: Boolean) = bookDao.updateChaptersReadStatus(chapterIds, isRead)
+    suspend fun updateChaptersReadStatus(chapterIds: List<String>, isRead: Boolean, readAt: Long? = if (isRead) System.currentTimeMillis() else null) = bookDao.updateChaptersReadStatus(chapterIds, isRead, readAt)
+
+    suspend fun updateChapterArchiveStatus(chapterId: String, isArchived: Boolean) = bookDao.updateChapterArchiveStatus(chapterId, isArchived)
+
+    suspend fun updateChaptersArchiveStatus(chapterIds: List<String>, isArchived: Boolean) = bookDao.updateChaptersArchiveStatus(chapterIds, isArchived)
+
+    suspend fun deleteChapter(id: String) = bookDao.deleteChapterById(id)
+
+    suspend fun deleteChapters(ids: List<String>) = bookDao.deleteChaptersByIds(ids)
 
     suspend fun getChapterCount(bookId: String): Int = bookDao.getChapterCountForBook(bookId)
 

@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ChapterRecapEntity::class,
         BookmarkEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 /**

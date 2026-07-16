@@ -207,10 +207,22 @@ class MainActivity : ComponentActivity() {
               .fillMaxSize()
               .padding(innerPadding)
           ) {
+            val isTtsActive = viewModel.ttsPlayingBook != null && viewModel.ttsPlayingChapter != null
+            val hasResumeSession = viewModel.hasResumableSession && viewModel.ttsPlayingBook == null
+            
+            val ttsBottomPadding = when {
+              isTtsActive && !viewModel.isTtsPlayerBarMinimized -> 165.dp
+              isTtsActive && viewModel.isTtsPlayerBarMinimized -> 72.dp
+              hasResumeSession -> 72.dp
+              else -> 0.dp
+            }
+
             NavHost(
               navController = navController,
               startDestination = "home",
-              modifier = Modifier.fillMaxSize()
+              modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = ttsBottomPadding)
             ) {
               composable("home") {
                 HomeScreen(
@@ -234,13 +246,28 @@ class MainActivity : ComponentActivity() {
               }
 
               composable(
-                route = "reader/{bookId}",
-                arguments = listOf(navArgument("bookId") { type = NavType.StringType })
+                route = "reader/{bookId}?chapterId={chapterId}&paraIndex={paraIndex}",
+                arguments = listOf(
+                  navArgument("bookId") { type = NavType.StringType },
+                  navArgument("chapterId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                  },
+                  navArgument("paraIndex") {
+                    type = NavType.IntType
+                    defaultValue = -1
+                  }
+                )
               ) { backStackEntry ->
                 val bookId = backStackEntry.arguments?.getString("bookId") ?: ""
+                val chapterId = backStackEntry.arguments?.getString("chapterId")
+                val paraIndex = backStackEntry.arguments?.getInt("paraIndex") ?: -1
                 ReaderScreen(
                   bookId = bookId,
                   viewModel = viewModel,
+                  initialChapterId = chapterId,
+                  initialParaIndex = paraIndex,
                   onBack = { navController.popBackStack() }
                 )
               }
@@ -262,6 +289,9 @@ class MainActivity : ComponentActivity() {
 
             TtsPlayerBar(
               viewModel = viewModel,
+              onNavigateToReader = { bookId, chapterId, paraIndex ->
+                navController.navigate("reader/$bookId?chapterId=$chapterId&paraIndex=$paraIndex")
+              },
               modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 8.dp)

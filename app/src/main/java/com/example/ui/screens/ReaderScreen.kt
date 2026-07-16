@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.items
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -48,6 +49,8 @@ import kotlinx.coroutines.launch
 fun ReaderScreen(
     bookId: String,
     viewModel: MainViewModel,
+    initialChapterId: String? = null,
+    initialParaIndex: Int = -1,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -59,7 +62,7 @@ fun ReaderScreen(
     val scope = rememberCoroutineScope()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
-    var currentChapterId by remember { mutableStateOf("") }
+    var currentChapterId by remember { mutableStateOf(initialChapterId ?: "") }
     val lazyListState = rememberLazyListState()
 
     val isDark = isSystemInDarkTheme()
@@ -197,11 +200,18 @@ fun ReaderScreen(
     }
 
     var drawerTabSelected by remember { mutableStateOf(0) } // 0 = Chapters, 1 = Bookmarks
+    var chapterSubTab by remember { mutableStateOf(0) } // 0 = Active, 1 = Archived
+    var showAutoArchiveSettingDialog by remember { mutableStateOf(false) }
+    val archivedChapters by viewModel.getArchivedChaptersFlow(bookId).collectAsState(emptyList())
+
     var showBookmarkDialog by remember { mutableStateOf(false) }
     var selectedParaIndexForBookmark by remember { mutableStateOf<Int?>(null) }
     var selectedParaTextForBookmark by remember { mutableStateOf("") }
     var bookmarkNoteText by remember { mutableStateOf("") }
     val bookmarks by viewModel.repository.getBookmarksFlow(bookId).collectAsState(emptyList())
+
+    var showDeleteChaptersConfirmDialog by remember { mutableStateOf(false) }
+    var chaptersToDelete by remember { mutableStateOf(emptyList<String>()) }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -352,14 +362,15 @@ fun ReaderScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             if (isMultiSelectMode) {
                                 IconButton(onClick = {
-                                    if (selectedChapters.size == chapters.size) {
+                                    val currentList = if (chapterSubTab == 0) chapters else archivedChapters
+                                    if (selectedChapters.size == currentList.size) {
                                         selectedChapters = emptySet()
                                     } else {
-                                        selectedChapters = chapters.map { it.id }.toSet()
+                                        selectedChapters = currentList.map { it.id }.toSet()
                                     }
                                 }) {
                                     Icon(
-                                        imageVector = if (selectedChapters.size == chapters.size) Icons.Default.SelectAll else Icons.Default.Checklist,
+                                        imageVector = if (selectedChapters.size == (if (chapterSubTab == 0) chapters.size else archivedChapters.size)) Icons.Default.SelectAll else Icons.Default.Checklist,
                                         contentDescription = "Select All"
                                     )
                                 }
@@ -371,6 +382,11 @@ fun ReaderScreen(
                                 }
                             } else {
                                 IconButton(onClick = {
+                                    showAutoArchiveSettingDialog = true
+                                }) {
+                                    Icon(imageVector = Icons.Default.Settings, contentDescription = "Auto-Archive Settings", tint = MaterialTheme.colorScheme.primary)
+                                }
+                                IconButton(onClick = {
                                     isMultiSelectMode = true
                                     selectedChapters = emptySet()
                                 }) {
@@ -379,6 +395,34 @@ fun ReaderScreen(
                             }
                         }
                     }
+
+                    TabRow(
+                        selectedTabIndex = chapterSubTab,
+                        containerColor = Color.Transparent,
+                        contentColor = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    ) {
+                        Tab(
+                            selected = chapterSubTab == 0,
+                            onClick = { 
+                                chapterSubTab = 0 
+                                isMultiSelectMode = false
+                                selectedChapters = emptySet()
+                            },
+                            text = { Text("Active (${chapters.size})", fontSize = 14.sp) }
+                        )
+                        Tab(
+                            selected = chapterSubTab == 1,
+                            onClick = { 
+                                chapterSubTab = 1 
+                                isMultiSelectMode = false
+                                selectedChapters = emptySet()
+                            },
+                            text = { Text("Archived (${archivedChapters.size})", fontSize = 14.sp) }
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.height(4.dp))
                     
                     if (isMultiSelectMode && selectedChapters.isNotEmpty()) {
                         Row(
@@ -390,132 +434,224 @@ fun ReaderScreen(
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            TextButton(
-                                onClick = {
-                                    viewModel.updateChaptersReadStatus(selectedChapters.toList(), true)
-                                    isMultiSelectMode = false
-                                    selectedChapters = emptySet()
+                            if (chapterSubTab == 0) {
+                                TextButton(
+                                    onClick = {
+                                        viewModel.updateChaptersReadStatus(selectedChapters.toList(), true)
+                                        isMultiSelectMode = false
+                                        selectedChapters = emptySet()
+                                    }
+                                ) {
+                                    Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Read", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                 }
-                            ) {
-                                Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Mark Read", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                
+                                HorizontalDivider(modifier = Modifier.height(20.dp).width(1.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.3f))
+                                
+                                TextButton(
+                                    onClick = {
+                                        viewModel.updateChaptersReadStatus(selectedChapters.toList(), false)
+                                        isMultiSelectMode = false
+                                        selectedChapters = emptySet()
+                                    }
+                                ) {
+                                    Icon(imageVector = Icons.Default.RemoveDone, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Unread", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                }
+
+                                HorizontalDivider(modifier = Modifier.height(20.dp).width(1.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.3f))
+
+                                TextButton(
+                                    onClick = {
+                                        viewModel.updateChaptersArchiveStatus(selectedChapters.toList(), true)
+                                        isMultiSelectMode = false
+                                        selectedChapters = emptySet()
+                                    }
+                                ) {
+                                    Icon(imageVector = Icons.Default.Archive, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Archive", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                }
+                            } else {
+                                TextButton(
+                                    onClick = {
+                                        viewModel.updateChaptersArchiveStatus(selectedChapters.toList(), false)
+                                        isMultiSelectMode = false
+                                        selectedChapters = emptySet()
+                                    }
+                                ) {
+                                    Icon(imageVector = Icons.Default.Unarchive, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Restore", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                }
                             }
-                            
-                            Divider(modifier = Modifier.height(20.dp).width(1.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.3f))
-                            
+
+                            HorizontalDivider(modifier = Modifier.height(20.dp).width(1.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.3f))
+
                             TextButton(
                                 onClick = {
-                                    viewModel.updateChaptersReadStatus(selectedChapters.toList(), false)
-                                    isMultiSelectMode = false
-                                    selectedChapters = emptySet()
+                                    chaptersToDelete = selectedChapters.toList()
+                                    showDeleteChaptersConfirmDialog = true
                                 }
                             ) {
-                                Icon(imageVector = Icons.Default.RemoveDone, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Icon(imageVector = Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
                                 Spacer(Modifier.width(4.dp))
-                                Text("Mark Unread", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text("Delete", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
                             }
                         }
                     }
                     
-                    Divider()
+                    HorizontalDivider()
 
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = 24.dp)
-                    ) {
-                        items(chapters) { ch ->
-                            val isCurrent = ch.id == currentChapterId
-                            val isSelected = selectedChapters.contains(ch.id)
-                            NavigationDrawerItem(
-                                label = {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        if (isMultiSelectMode) {
-                                            Checkbox(
-                                                checked = isSelected,
-                                                onCheckedChange = { checked ->
-                                                    selectedChapters = if (checked) {
-                                                        selectedChapters + ch.id
-                                                    } else {
-                                                        selectedChapters - ch.id
-                                                    }
-                                                },
-                                                colors = CheckboxDefaults.colors(
-                                                    checkedColor = MaterialTheme.colorScheme.primary
-                                                )
-                                            )
-                                        } else {
-                                            // Visual indicators for Read / Unread in standard view
-                                            Icon(
-                                                imageVector = if (ch.isRead) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
-                                                contentDescription = if (ch.isRead) "Read" else "Unread",
-                                                tint = if (ch.isRead) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) 
-                                                       else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                                                modifier = Modifier.size(20.dp).clickable {
-                                                    viewModel.updateChaptersReadStatus(listOf(ch.id), !ch.isRead)
-                                                }
-                                            )
-                                        }
-                                        
-                                        Text(
-                                            text = ch.title,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (isCurrent) MaterialTheme.colorScheme.primary 
-                                                    else if (ch.isRead) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                                    else MaterialTheme.colorScheme.onSurface,
-                                            modifier = Modifier.weight(1f)
-                                        )
+                    val currentList = if (chapterSubTab == 0) chapters else archivedChapters
 
-                                        if (!isMultiSelectMode) {
-                                            if (viewModel.rescrapingChapterId == ch.id) {
-                                                CircularProgressIndicator(
-                                                    modifier = Modifier.size(20.dp),
-                                                    strokeWidth = 2.dp,
-                                                    color = MaterialTheme.colorScheme.primary
-                                                )
-                                            } else {
-                                                IconButton(
-                                                    onClick = {
-                                                        viewModel.rescrapeSingleChapter(ch) { success, msg ->
-                                                            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                    if (currentList.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (chapterSubTab == 0) "No active chapters." else "No archived chapters.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(bottom = 24.dp)
+                        ) {
+                            items(currentList) { ch ->
+                                val isCurrent = ch.id == currentChapterId
+                                val isSelected = selectedChapters.contains(ch.id)
+                                NavigationDrawerItem(
+                                    label = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            if (isMultiSelectMode) {
+                                                Checkbox(
+                                                    checked = isSelected,
+                                                    onCheckedChange = { checked ->
+                                                        selectedChapters = if (checked) {
+                                                            selectedChapters + ch.id
+                                                        } else {
+                                                            selectedChapters - ch.id
                                                         }
                                                     },
-                                                    modifier = Modifier.size(24.dp)
-                                                ) {
+                                                    colors = CheckboxDefaults.colors(
+                                                        checkedColor = MaterialTheme.colorScheme.primary
+                                                    )
+                                                )
+                                            } else {
+                                                if (chapterSubTab == 0) {
+                                                    // Visual indicators for Read / Unread in standard view
                                                     Icon(
-                                                        imageVector = Icons.Default.Refresh,
-                                                        contentDescription = "Rescrape Chapter",
-                                                        modifier = Modifier.size(16.dp),
-                                                        tint = MaterialTheme.colorScheme.primary
+                                                        imageVector = if (ch.isRead) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                                                        contentDescription = if (ch.isRead) "Read" else "Unread",
+                                                        tint = if (ch.isRead) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) 
+                                                               else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                                        modifier = Modifier.size(20.dp).clickable {
+                                                            viewModel.updateChaptersReadStatus(listOf(ch.id), !ch.isRead)
+                                                        }
+                                                    )
+                                                } else {
+                                                    // Archived icon
+                                                    Icon(
+                                                        imageVector = Icons.Default.Archive,
+                                                        contentDescription = "Archived",
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                                        modifier = Modifier.size(20.dp).clickable {
+                                                            viewModel.updateChaptersArchiveStatus(listOf(ch.id), false)
+                                                        }
                                                     )
                                                 }
                                             }
+                                            
+                                            Text(
+                                                text = ch.title,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isCurrent) MaterialTheme.colorScheme.primary 
+                                                        else if (ch.isRead) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                                        else MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.weight(1f)
+                                            )
+
+                                            if (!isMultiSelectMode) {
+                                                Row(
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    if (chapterSubTab == 0) {
+                                                        if (viewModel.rescrapingChapterId == ch.id) {
+                                                            CircularProgressIndicator(
+                                                                modifier = Modifier.size(20.dp),
+                                                                strokeWidth = 2.dp,
+                                                                color = MaterialTheme.colorScheme.primary
+                                                            )
+                                                        } else {
+                                                            IconButton(
+                                                                onClick = {
+                                                                    viewModel.rescrapeSingleChapter(ch) { success, msg ->
+                                                                        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                                                    }
+                                                                },
+                                                                modifier = Modifier.size(24.dp)
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.Refresh,
+                                                                    contentDescription = "Rescrape Chapter",
+                                                                    modifier = Modifier.size(16.dp),
+                                                                    tint = MaterialTheme.colorScheme.primary
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+
+                                                    IconButton(
+                                                        onClick = {
+                                                            chaptersToDelete = listOf(ch.id)
+                                                            showDeleteChaptersConfirmDialog = true
+                                                        },
+                                                        modifier = Modifier.size(24.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Delete,
+                                                            contentDescription = "Delete Chapter",
+                                                            modifier = Modifier.size(16.dp),
+                                                            tint = MaterialTheme.colorScheme.error
+                                                        )
+                                                    }
+                                                }
+                                            }
                                         }
-                                    }
-                                },
-                                selected = !isMultiSelectMode && isCurrent,
-                                onClick = {
-                                    if (isMultiSelectMode) {
-                                        selectedChapters = if (isSelected) {
-                                            selectedChapters - ch.id
+                                    },
+                                    selected = !isMultiSelectMode && isCurrent,
+                                    onClick = {
+                                        if (isMultiSelectMode) {
+                                            selectedChapters = if (isSelected) {
+                                                selectedChapters - ch.id
+                                            } else {
+                                                selectedChapters + ch.id
+                                            }
                                         } else {
-                                            selectedChapters + ch.id
+                                            scope.launch {
+                                                currentChapterId = ch.id
+                                                drawerState.close()
+                                            }
                                         }
-                                    } else {
-                                        scope.launch {
-                                            currentChapterId = ch.id
-                                            drawerState.close()
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-                            )
+                                    },
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -524,11 +660,16 @@ fun ReaderScreen(
     ) {
         Scaffold(
             topBar = {
+                val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+                val isCompact = configuration.screenWidthDp < 600
+                var showMenu by remember { mutableStateOf(false) }
+
                 TopAppBar(
                     title = {
                         Text(
                             text = bookState?.title ?: "Offline Reader",
                             maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                     },
@@ -538,7 +679,7 @@ fun ReaderScreen(
                         }
                     },
                     actions = {
-                        // Audio / TTS Narration
+                        // Audio / TTS Narration (Always visible)
                         IconButton(onClick = {
                             val activeCh = activeChapter
                             val bk = bookState
@@ -559,31 +700,84 @@ fun ReaderScreen(
                             }
                             Icon(imageVector = icon, contentDescription = "Listen to Chapter")
                         }
-                        // Open TOC drawer
+
+                        // Open TOC drawer (Always visible)
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(imageVector = Icons.Default.FormatListNumbered, contentDescription = "Chapter Index")
                         }
-                        // Text style settings
-                        IconButton(onClick = { showSettingsDialog = true }) {
-                            Icon(imageVector = Icons.Default.TextFormat, contentDescription = "Font settings")
-                        }
-                        // Rescrape Current Chapter
-                        IconButton(onClick = {
-                            val activeCh = activeChapter
-                            if (activeCh != null) {
-                                viewModel.rescrapeSingleChapter(activeCh) { success, msg ->
-                                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+
+                        if (!isCompact) {
+                            // Text style settings (Visible on larger screens)
+                            IconButton(onClick = { showSettingsDialog = true }) {
+                                Icon(imageVector = Icons.Default.TextFormat, contentDescription = "Font settings")
+                            }
+
+                            // Rescrape Current Chapter (Visible on larger screens)
+                            IconButton(onClick = {
+                                val activeCh = activeChapter
+                                if (activeCh != null) {
+                                    viewModel.rescrapeSingleChapter(activeCh) { success, msg ->
+                                        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }) {
+                                if (viewModel.rescrapingChapterId == activeChapter?.id) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                } else {
+                                    Icon(imageVector = Icons.Default.Refresh, contentDescription = "Rescrape Chapter")
                                 }
                             }
-                        }) {
-                            if (viewModel.rescrapingChapterId == activeChapter?.id) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            } else {
-                                Icon(imageVector = Icons.Default.Refresh, contentDescription = "Rescrape Chapter")
+                        } else {
+                            // Dropdown/Overflow Menu (Visible on compact mobile screens)
+                            Box {
+                                IconButton(onClick = { showMenu = true }) {
+                                    Icon(imageVector = Icons.Default.MoreVert, contentDescription = "More options")
+                                }
+                                DropdownMenu(
+                                    expanded = showMenu,
+                                    onDismissRequest = { showMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Font Settings") },
+                                        leadingIcon = { Icon(Icons.Default.TextFormat, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                                        onClick = {
+                                            showMenu = false
+                                            showSettingsDialog = true
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = {
+                                            if (viewModel.rescrapingChapterId == activeChapter?.id) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    CircularProgressIndicator(
+                                                        modifier = Modifier.size(16.dp),
+                                                        strokeWidth = 2.dp,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                    Text("Rescraping...")
+                                                }
+                                            } else {
+                                                Text("Rescrape Chapter")
+                                            }
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                                        enabled = viewModel.rescrapingChapterId != activeChapter?.id,
+                                        onClick = {
+                                            showMenu = false
+                                            val activeCh = activeChapter
+                                            if (activeCh != null) {
+                                                viewModel.rescrapeSingleChapter(activeCh) { success, msg ->
+                                                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
                             }
                         }
                     },
@@ -624,11 +818,12 @@ fun ReaderScreen(
                             colors = ButtonDefaults.textButtonColors(
                                 contentColor = barContentColor,
                                 disabledContentColor = barContentColor.copy(alpha = 0.38f)
-                            )
+                            ),
+                            modifier = Modifier.weight(1f, fill = false)
                         ) {
                             Icon(imageVector = Icons.Default.ChevronLeft, contentDescription = "Prev")
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Previous", fontWeight = FontWeight.Bold)
+                            Text("Previous", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
 
                         Text(
@@ -638,7 +833,9 @@ fun ReaderScreen(
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 color = barContentColor
-                            )
+                            ),
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            maxLines = 1
                         )
 
                         TextButton(
@@ -650,9 +847,10 @@ fun ReaderScreen(
                             colors = ButtonDefaults.textButtonColors(
                                 contentColor = barContentColor,
                                 disabledContentColor = barContentColor.copy(alpha = 0.38f)
-                            )
+                            ),
+                            modifier = Modifier.weight(1f, fill = false)
                         ) {
-                            Text("Next", fontWeight = FontWeight.Bold)
+                            Text("Next", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Spacer(modifier = Modifier.width(4.dp))
                             Icon(imageVector = Icons.Default.ChevronRight, contentDescription = "Next")
                         }
@@ -687,11 +885,15 @@ fun ReaderScreen(
                     // Restore scroll state or reset to 0 on chapter change
                     LaunchedEffect(currentChapterId) {
                         if (!currentChapterId.isNullOrEmpty()) {
-                            val savedPara = viewModel.getSavedParagraphIndex(bookId, currentChapterId)
-                            if (savedPara > 0) {
-                                lazyListState.scrollToItem(savedPara + 3)
+                            if (currentChapterId == initialChapterId && initialParaIndex >= 0) {
+                                lazyListState.scrollToItem(initialParaIndex + 3)
                             } else {
-                                lazyListState.scrollToItem(0)
+                                val savedPara = viewModel.getSavedParagraphIndex(bookId, currentChapterId)
+                                if (savedPara > 0) {
+                                    lazyListState.scrollToItem(savedPara + 3)
+                                } else {
+                                    lazyListState.scrollToItem(0)
+                                }
                             }
                         } else {
                             lazyListState.scrollToItem(0)
@@ -791,7 +993,9 @@ fun ReaderScreen(
                     LazyColumn(
                         state = lazyListState,
                         modifier = Modifier
-                            .fillMaxSize()
+                            .fillMaxHeight()
+                            .widthIn(max = 800.dp)
+                            .align(Alignment.TopCenter)
                             .padding(horizontal = viewModel.readerMargin.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                         contentPadding = PaddingValues(top = 20.dp, bottom = 80.dp)
@@ -814,6 +1018,7 @@ fun ReaderScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
                                     .padding(vertical = 4.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -919,7 +1124,7 @@ fun ReaderScreen(
                         // Paragraphs
                         items(paragraphs.size) { idx ->
                             val para = paragraphs[idx]
-                            val isReadingThisPara = viewModel.ttsIsPlaying &&
+                            val isReadingThisPara = (viewModel.ttsIsPlaying || viewModel.ttsIsPaused) &&
                                     viewModel.ttsPlayingBook?.id == bookState?.id &&
                                     viewModel.ttsPlayingChapter?.id == activeChapter.id &&
                                     idx == viewModel.ttsActiveParagraphIndex
@@ -950,7 +1155,7 @@ fun ReaderScreen(
                                 readerTextColor
                             }
 
-                            val paragraphAlpha = if (viewModel.focusModeEnabled && viewModel.ttsIsPlaying &&
+                            val paragraphAlpha = if (viewModel.focusModeEnabled && (viewModel.ttsIsPlaying || viewModel.ttsIsPaused) &&
                                     viewModel.ttsPlayingBook?.id == bookState?.id &&
                                     viewModel.ttsPlayingChapter?.id == activeChapter.id) {
                                 if (isReadingThisPara) 1.0f else 0.35f
@@ -1324,6 +1529,111 @@ fun ReaderScreen(
             chapter = activeChapter,
             viewModel = viewModel,
             onDismiss = { showAskAiDialog = false }
+        )
+    }
+
+    if (showDeleteChaptersConfirmDialog && chaptersToDelete.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = {
+                showDeleteChaptersConfirmDialog = false
+                chaptersToDelete = emptyList()
+            },
+            title = { Text("Delete Chapters?", fontWeight = FontWeight.Bold) },
+            text = {
+                val count = chaptersToDelete.size
+                Text("Are you sure you want to delete ${if (count == 1) "this chapter" else "$count selected chapters"}? This action is permanent and cannot be undone.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val currentActiveChapterIsDeleted = chaptersToDelete.contains(currentChapterId)
+                        viewModel.deleteChapters(bookId, chaptersToDelete) { msg ->
+                            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                            if (currentActiveChapterIsDeleted) {
+                                scope.launch {
+                                    val remaining = chapters.filterNot { chaptersToDelete.contains(it.id) }
+                                    if (remaining.isNotEmpty()) {
+                                        currentChapterId = remaining.first().id
+                                    } else {
+                                        onBack()
+                                    }
+                                }
+                            }
+                        }
+                        showDeleteChaptersConfirmDialog = false
+                        chaptersToDelete = emptyList()
+                        isMultiSelectMode = false
+                        selectedChapters = emptySet()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showDeleteChaptersConfirmDialog = false
+                    chaptersToDelete = emptyList()
+                }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showAutoArchiveSettingDialog && bookState != null) {
+        val currentHours = bookState?.autoArchiveHours ?: 0
+        AlertDialog(
+            onDismissRequest = { showAutoArchiveSettingDialog = false },
+            title = { Text("Auto-Archive Settings", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "After chapters stay in \"Read\" status for the selected duration, they will automatically be moved to the Archive. This helps keep your Chapter List clean!",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    val options = listOf(
+                        0 to "Never (Disable)",
+                        1 to "1 Hour",
+                        2 to "2 Hours",
+                        3 to "3 Hours",
+                        5 to "5 Hours",
+                        10 to "10 Hours",
+                        24 to "1 Day"
+                    )
+                    
+                    options.forEach { (hours, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    scope.launch {
+                                        viewModel.repository.updateBook(bookState!!.copy(autoArchiveHours = hours))
+                                        showAutoArchiveSettingDialog = false
+                                        android.widget.Toast.makeText(context, "Auto-archive set to $label", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                                .padding(vertical = 12.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            RadioButton(
+                                selected = currentHours == hours,
+                                onClick = null
+                            )
+                            Text(text = label, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAutoArchiveSettingDialog = false }) {
+                    Text("Close", fontWeight = FontWeight.Bold)
+                }
+            }
         )
     }
 

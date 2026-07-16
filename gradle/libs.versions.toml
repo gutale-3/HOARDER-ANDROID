@@ -43,9 +43,10 @@ credentials = "1.5.0"
 googleid = "1.1.1"
 jsoup = "1.18.1"
 mediapipeTasksGenai = "0.10.14"
-onnxruntime = "1.18.0"
+onnxruntime = "1.19.0"
 sherpaOnnx = "v1.13.4"
 commonsCompress = "1.27.1"
+androidxGraphicsPath = "1.0.1"
 
 
 [libraries]
@@ -107,6 +108,7 @@ mediapipe-tasks-genai = { group = "com.google.mediapipe", name = "tasks-genai", 
 onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntime" }
 sherpa-onnx = { group = "com.github.k2-fsa", name = "sherpa-onnx", version.ref = "sherpaOnnx" }
 commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
+androidx-graphics-path = { group = "androidx.graphics", name = "graphics-path", version.ref = "androidxGraphicsPath" }
 
 
 [plugins]

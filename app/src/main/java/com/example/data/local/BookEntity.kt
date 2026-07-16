@@ -14,5 +14,6 @@ data class BookEntity(
     val coverLocalPath: String?,
     val lastReadChapterId: String?,
     val totalChapters: Int,
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    val autoArchiveHours: Int = 0
 )

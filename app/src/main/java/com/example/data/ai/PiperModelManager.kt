@@ -26,7 +26,17 @@ class PiperModelManager(private val context: Context) {
         val voiceFolder = getVoiceModelDir(voice)
         val modelFile = File(voiceFolder, voice.modelFilename)
         val tokensFile = File(voiceFolder, voice.tokensFilename)
-        return modelFile.exists() && modelFile.length() > 0 && tokensFile.exists() && tokensFile.length() > 0
+        val espeakDir = File(voiceFolder, "espeak-ng-data")
+        val baseChecks = modelFile.exists() && modelFile.length() > 1024 * 1024 && // At least 1MB
+               tokensFile.exists() && tokensFile.length() > 0 &&
+               espeakDir.exists() && espeakDir.isDirectory && (espeakDir.list()?.isNotEmpty() ?: false)
+               
+        return if (voice.isKokoro) {
+            val voicesFile = File(voiceFolder, voice.voicesFilename)
+            baseChecks && voicesFile.exists() && voicesFile.length() > 0
+        } else {
+            baseChecks
+        }
     }
 
     suspend fun downloadAndExtractVoice(
@@ -38,15 +48,43 @@ class PiperModelManager(private val context: Context) {
         
         try {
             // Step 1: Download .tar.bz2 to cache with progress (0% - 50%)
-            val url = URL(voice.tarBz2Url)
-            val connection = url.openConnection() as HttpURLConnection
-            connection.connectTimeout = 15000
-            connection.readTimeout = 15000
-            connection.connect()
+            var urlString = voice.tarBz2Url
+            var connection: HttpURLConnection
+            var responseCode: Int
+            var redirectCount = 0
+            val maxRedirects = 5
 
-            if (connection.responseCode != HttpURLConnection.HTTP_OK) {
+            while (true) {
+                val url = URL(urlString)
+                connection = url.openConnection() as HttpURLConnection
+                connection.connectTimeout = 15000
+                connection.readTimeout = 15000
+                connection.instanceFollowRedirects = true
+                connection.connect()
+
+                responseCode = connection.responseCode
+                if (responseCode == HttpURLConnection.HTTP_MOVED_TEMP || 
+                    responseCode == HttpURLConnection.HTTP_MOVED_PERM || 
+                    responseCode == HttpURLConnection.HTTP_SEE_OTHER ||
+                    responseCode == 307 || responseCode == 308) {
+                    
+                    redirectCount++
+                    if (redirectCount > maxRedirects) {
+                        return@withContext Result.failure(Exception("Too many redirects"))
+                    }
+                    val newUrl = connection.getHeaderField("Location")
+                    connection.disconnect()
+                    if (newUrl != null) {
+                        urlString = newUrl
+                        continue
+                    }
+                }
+                break
+            }
+
+            if (responseCode != HttpURLConnection.HTTP_OK) {
                 return@withContext Result.failure(
-                    Exception("Failed to download voice: Server returned HTTP ${connection.responseCode}")
+                    Exception("Failed to download voice: Server returned HTTP $responseCode")
                 )
             }
 
@@ -107,6 +145,11 @@ class PiperModelManager(private val context: Context) {
                         }
                     }
                 }
+            }
+
+            // Validate extracted files
+            if (!isVoiceDownloaded(voice)) {
+                throw Exception("Extracted files are incomplete or corrupted.")
             }
 
             onProgress(100)

@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.viewmodel.MainViewModel
@@ -32,6 +33,7 @@ import com.example.viewmodel.VoiceOption
 @Composable
 fun TtsPlayerBar(
     viewModel: MainViewModel,
+    onNavigateToReader: (String, String, Int) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val playingBook = viewModel.ttsPlayingBook
@@ -103,6 +105,9 @@ fun TtsPlayerBar(
             modifier = modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 4.dp)
+                .clickable {
+                    onNavigateToReader(playingBook.id, playingChapter.id, viewModel.ttsActiveParagraphIndex ?: 0)
+                }
                 .testTag("tts_player_bar_minimized"),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp)
@@ -222,7 +227,11 @@ fun TtsPlayerBar(
 
                 // Info text
                 Column(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable {
+                            onNavigateToReader(playingBook.id, playingChapter.id, viewModel.ttsActiveParagraphIndex ?: 0)
+                        },
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Text(
@@ -243,35 +252,11 @@ fun TtsPlayerBar(
                     )
                 }
 
-                // Voice settings and stop buttons
+                // Minimize and stop buttons
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    IconButton(
-                        onClick = { viewModel.toggleTtsAutoScroll() },
-                        modifier = Modifier.testTag("tts_quick_autoscroll_btn")
-                    ) {
-                        Icon(
-                            imageVector = if (viewModel.ttsAutoScrollEnabled) Icons.Default.MenuBook else Icons.Default.Book,
-                            contentDescription = "Toggle Auto-Scroll",
-                            tint = if (viewModel.ttsAutoScrollEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    IconButton(onClick = {
-                        viewModel.initTts()
-                        showSettingsDialog = true
-                    }) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Voice Settings",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
                     IconButton(onClick = { viewModel.isTtsPlayerBarMinimized = true }) {
                         Icon(
                             imageVector = Icons.Default.UnfoldLess,
@@ -344,6 +329,21 @@ fun TtsPlayerBar(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Auto-Scroll Toggle Button
+                IconButton(
+                    onClick = { viewModel.toggleTtsAutoScroll() },
+                    modifier = Modifier.size(40.dp).testTag("tts_quick_autoscroll_btn")
+                ) {
+                    Icon(
+                        imageVector = if (viewModel.ttsAutoScrollEnabled) Icons.Default.MenuBook else Icons.Default.Book,
+                        contentDescription = "Toggle Auto-Scroll",
+                        tint = if (viewModel.ttsAutoScrollEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
                 // Prev Chapter
                 IconButton(
                     onClick = { viewModel.playPreviousChapterTts() },
@@ -423,6 +423,24 @@ fun TtsPlayerBar(
                         contentDescription = "Next Chapter",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // Voice Settings Button
+                IconButton(
+                    onClick = {
+                        viewModel.initTts()
+                        showSettingsDialog = true
+                    },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Voice Settings",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
@@ -699,12 +717,66 @@ fun TtsPlayerBar(
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Text(
-                                text = "Select Reader Voice (${viewModel.ttsVoices.size} options)",
+                                text = "Select Reader Voice",
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.primary
                             )
 
-                            if (viewModel.ttsVoices.isEmpty()) {
+                            var voiceFilter by remember { mutableStateOf("All") }
+
+                            // Filter Chips Row
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                listOf("All", "Kokoro", "Piper", "System").forEach { filter ->
+                                    val count = when (filter) {
+                                        "All" -> viewModel.ttsVoices.size
+                                        "Kokoro" -> viewModel.ttsVoices.count { it.id.startsWith("kokoro-") }
+                                        "Piper" -> viewModel.ttsVoices.count { it.id.startsWith("vits-piper-") }
+                                        "System" -> viewModel.ttsVoices.count { !it.id.startsWith("vits-piper-") && !it.id.startsWith("kokoro-") }
+                                        else -> 0
+                                    }
+                                    
+                                    if (count > 0) {
+                                        val isSelected = voiceFilter == filter
+                                        Surface(
+                                            onClick = { voiceFilter = filter },
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                            border = BorderStroke(
+                                                width = 1.dp,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
+                                            )
+                                        ) {
+                                            Text(
+                                                text = "$filter ($count)",
+                                                modifier = Modifier.padding(vertical = 8.dp),
+                                                style = MaterialTheme.typography.labelMedium.copy(
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                                ),
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            val filteredVoices = viewModel.ttsVoices.filter { voice ->
+                                when (voiceFilter) {
+                                    "All" -> true
+                                    "Kokoro" -> voice.id.startsWith("kokoro-")
+                                    "Piper" -> voice.id.startsWith("vits-piper-")
+                                    "System" -> !voice.id.startsWith("vits-piper-") && !voice.id.startsWith("kokoro-")
+                                    else -> true
+                                }
+                            }
+
+                            if (filteredVoices.isEmpty()) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -727,9 +799,9 @@ fun TtsPlayerBar(
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
                                     contentPadding = PaddingValues(8.dp)
                                 ) {
-                                    items(viewModel.ttsVoices) { voice ->
+                                    items(filteredVoices) { voice ->
                                         val isSelected = voice.id == viewModel.selectedVoiceId
-                                        if (voice.id.startsWith("vits-piper-")) {
+                                        if (voice.id.startsWith("vits-piper-") || voice.id.startsWith("kokoro-")) {
                                             val piperVoice = com.example.data.ai.PiperVoiceCatalog.getVoiceById(voice.id)
                                             val isDownloaded = viewModel.isVoiceDownloaded(piperVoice)
                                             val isThisVoiceDownloading = viewModel.premiumVoiceDownloading && viewModel.sherpaOnnxTtsEngine.selectedVoiceId == voice.id
@@ -737,7 +809,7 @@ fun TtsPlayerBar(
                                             Card(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .clip(RoundedCornerShape(16.dp))
                                                     .clickable {
                                                         if (isDownloaded) {
                                                             viewModel.setTtsVoice(voice)
@@ -747,7 +819,7 @@ fun TtsPlayerBar(
                                                     },
                                                 colors = CardDefaults.cardColors(
                                                     containerColor = if (isSelected) {
-                                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
                                                     } else {
                                                         MaterialTheme.colorScheme.surface
                                                     }
@@ -758,22 +830,22 @@ fun TtsPlayerBar(
                                                 )
                                             ) {
                                                 Column(
-                                                    modifier = Modifier.padding(10.dp),
-                                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                                    modifier = Modifier.padding(12.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(8.dp)
                                                 ) {
                                                     Row(
                                                         modifier = Modifier.fillMaxWidth(),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                        verticalAlignment = Alignment.Top,
+                                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                                                     ) {
                                                         // Avatar Badge
                                                         Box(
                                                             modifier = Modifier
-                                                                .size(40.dp)
+                                                                .size(44.dp)
                                                                 .background(
-                                                                    if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                                                                    else MaterialTheme.colorScheme.surfaceVariant,
-                                                                    shape = RoundedCornerShape(10.dp)
+                                                                    if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                                                                    shape = RoundedCornerShape(12.dp)
                                                                 ),
                                                             contentAlignment = Alignment.Center
                                                         ) {
@@ -781,7 +853,7 @@ fun TtsPlayerBar(
                                                                 imageVector = if (isSelected) Icons.Default.VolumeUp else Icons.Default.RecordVoiceOver,
                                                                 contentDescription = null,
                                                                 tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                                modifier = Modifier.size(20.dp)
+                                                                modifier = Modifier.size(22.dp)
                                                             )
                                                         }
 
@@ -789,16 +861,37 @@ fun TtsPlayerBar(
                                                         Column(modifier = Modifier.weight(1f)) {
                                                             Row(
                                                                 verticalAlignment = Alignment.CenterVertically,
-                                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                                modifier = Modifier.wrapContentWidth()
                                                             ) {
                                                                 Text(
-                                                                    text = "Piper: ${piperVoice.name}",
-                                                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                                                    text = piperVoice.name,
+                                                                    style = MaterialTheme.typography.titleMedium.copy(
                                                                         fontWeight = FontWeight.Bold,
                                                                         color = if (isSelected) MaterialTheme.colorScheme.primary
                                                                         else MaterialTheme.colorScheme.onSurface
                                                                     )
                                                                 )
+                                                                
+                                                                val engineBadgeBg = if (piperVoice.isKokoro) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.secondaryContainer
+                                                                val engineBadgeColor = if (piperVoice.isKokoro) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSecondaryContainer
+                                                                val engineBadgeText = if (piperVoice.isKokoro) "KOKORO" else "PIPER"
+
+                                                                Box(
+                                                                    modifier = Modifier
+                                                                        .background(engineBadgeBg, RoundedCornerShape(4.dp))
+                                                                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                                                                ) {
+                                                                    Text(
+                                                                        text = engineBadgeText,
+                                                                        style = MaterialTheme.typography.labelSmall.copy(
+                                                                            fontSize = 8.sp,
+                                                                            fontWeight = FontWeight.Black,
+                                                                            color = engineBadgeColor
+                                                                        )
+                                                                    )
+                                                                }
+
                                                                 if (isDownloaded) {
                                                                     Box(
                                                                         modifier = Modifier
@@ -828,23 +921,46 @@ fun TtsPlayerBar(
                                                                     }
                                                                 }
                                                             }
+                                                            
+                                                            Spacer(modifier = Modifier.height(2.dp))
                                                             Text(
                                                                 text = "${piperVoice.accent} • ${piperVoice.gender}",
-                                                                style = MaterialTheme.typography.labelSmall,
+                                                                style = MaterialTheme.typography.bodySmall,
                                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+
+                                                            Spacer(modifier = Modifier.height(4.dp))
+                                                            Text(
+                                                                text = piperVoice.description,
+                                                                style = MaterialTheme.typography.bodySmall.copy(
+                                                                    lineHeight = 15.sp,
+                                                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                                                ),
+                                                                maxLines = 2,
+                                                                overflow = TextOverflow.Ellipsis
                                                             )
                                                         }
 
                                                         // Play Sample & Delete Controls
-                                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                                        ) {
+                                                            val isPlayingPreview = viewModel.previewingVoiceId == voice.id
                                                             IconButton(
-                                                                onClick = { viewModel.playVoicePreview(voice) },
+                                                                onClick = {
+                                                                    if (isPlayingPreview) {
+                                                                        viewModel.stopVoicePreview()
+                                                                    } else {
+                                                                        viewModel.playVoicePreview(voice)
+                                                                    }
+                                                                },
                                                                 modifier = Modifier.size(36.dp)
                                                             ) {
                                                                 Icon(
-                                                                    imageVector = Icons.Default.PlayCircle,
-                                                                    contentDescription = "Preview Sample",
-                                                                    tint = MaterialTheme.colorScheme.primary,
+                                                                    imageVector = if (isPlayingPreview) Icons.Default.Stop else Icons.Default.PlayCircle,
+                                                                    contentDescription = if (isPlayingPreview) "Stop Preview" else "Preview Sample",
+                                                                    tint = if (isPlayingPreview) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                                                                     modifier = Modifier.size(24.dp)
                                                                 )
                                                             }
@@ -940,13 +1056,13 @@ fun TtsPlayerBar(
                                             Card(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .clip(RoundedCornerShape(16.dp))
                                                     .clickable {
                                                         viewModel.setTtsVoice(voice)
                                                     },
                                                 colors = CardDefaults.cardColors(
                                                     containerColor = if (isSelected) {
-                                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
                                                     } else {
                                                         MaterialTheme.colorScheme.surface
                                                     }
@@ -959,18 +1075,18 @@ fun TtsPlayerBar(
                                                 Row(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
-                                                        .padding(10.dp),
+                                                        .padding(12.dp),
                                                     verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                                                 ) {
                                                     // Avatar Badge
                                                     Box(
                                                         modifier = Modifier
-                                                            .size(40.dp)
+                                                            .size(44.dp)
                                                             .background(
-                                                                if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                                                                else MaterialTheme.colorScheme.surfaceVariant,
-                                                                shape = RoundedCornerShape(10.dp)
+                                                                if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                                                                shape = RoundedCornerShape(12.dp)
                                                             ),
                                                         contentAlignment = Alignment.Center
                                                     ) {
@@ -978,37 +1094,65 @@ fun TtsPlayerBar(
                                                             imageVector = if (isSelected) Icons.Default.VolumeUp else Icons.Default.Hearing,
                                                             contentDescription = null,
                                                             tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                            modifier = Modifier.size(20.dp)
+                                                            modifier = Modifier.size(22.dp)
                                                         )
                                                     }
 
                                                     // Voice Details
                                                     Column(modifier = Modifier.weight(1f)) {
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = voice.name.replace("System: ", "").substringAfterLast(" - ").uppercase(),
+                                                                style = MaterialTheme.typography.titleMedium.copy(
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                                ),
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                            
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
+                                                                    .padding(horizontal = 5.dp, vertical = 2.dp)
+                                                            ) {
+                                                                Text(
+                                                                    text = "SYSTEM",
+                                                                    style = MaterialTheme.typography.labelSmall.copy(
+                                                                        fontSize = 8.sp,
+                                                                        fontWeight = FontWeight.Black,
+                                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                                    )
+                                                                )
+                                                            }
+                                                        }
+                                                        Spacer(modifier = Modifier.height(2.dp))
                                                         Text(
-                                                            text = voice.name.replace("System: ", "").substringAfterLast(" - ").uppercase(),
-                                                            style = MaterialTheme.typography.bodyMedium.copy(
-                                                                fontWeight = FontWeight.Bold,
-                                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                                            ),
-                                                            maxLines = 1,
-                                                            overflow = TextOverflow.Ellipsis
-                                                        )
-                                                        Text(
-                                                            text = "System Default Voice",
-                                                            style = MaterialTheme.typography.labelSmall,
+                                                            text = "System Default Text-to-Speech Voice",
+                                                            style = MaterialTheme.typography.bodySmall,
                                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                                         )
                                                     }
 
                                                     // Play Sample button
+                                                    val isPlayingPreview = viewModel.previewingVoiceId == voice.id
                                                     IconButton(
-                                                        onClick = { viewModel.playVoicePreview(voice) },
+                                                        onClick = {
+                                                            if (isPlayingPreview) {
+                                                                viewModel.stopVoicePreview()
+                                                            } else {
+                                                                viewModel.playVoicePreview(voice)
+                                                            }
+                                                        },
                                                         modifier = Modifier.size(36.dp)
                                                     ) {
                                                         Icon(
-                                                            imageVector = Icons.Default.PlayCircle,
-                                                            contentDescription = "Preview Sample",
-                                                            tint = MaterialTheme.colorScheme.primary,
+                                                            imageVector = if (isPlayingPreview) Icons.Default.Stop else Icons.Default.PlayCircle,
+                                                            contentDescription = if (isPlayingPreview) "Stop Preview" else "Preview Sample",
+                                                            tint = if (isPlayingPreview) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                                                             modifier = Modifier.size(24.dp)
                                                         )
                                                     }

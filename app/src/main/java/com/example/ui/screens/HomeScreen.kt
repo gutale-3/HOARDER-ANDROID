@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.painterResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.BookEntity
 import com.example.viewmodel.MainViewModel
@@ -44,6 +45,15 @@ fun HomeScreen(
     val books by viewModel.repository.allBooks.collectAsState(emptyList())
     val totalBooksCount by viewModel.totalBooks.collectAsState(0)
     val totalChaptersCount by viewModel.totalChapters.collectAsState(0)
+
+    val unreadCounts = remember { mutableStateMapOf<String, Int>() }
+
+    LaunchedEffect(books) {
+        books.forEach { book ->
+            val count = viewModel.repository.getUnreadChapterCount(book.id)
+            unreadCounts[book.id] = count
+        }
+    }
 
     LazyColumn(
         modifier = modifier
@@ -88,12 +98,24 @@ fun HomeScreen(
                     .background(
                         Brush.linearGradient(
                             colors = listOf(
-                                Color(0xFF1B2024),
-                                Color(0xFF0E1113)
+                                Color(0xFF1B1D2F),
+                                Color(0xFF0F101A)
                             )
                         )
                     )
-                    .border(1.dp, Color(0xFF33373B), RoundedCornerShape(28.dp))
+                    .border(
+                        BorderStroke(
+                            1.5.dp,
+                            Brush.horizontalGradient(
+                                colors = listOf(
+                                    Color(0xFFFFE885).copy(alpha = 0.6f),
+                                    Color(0xFFD4AF37).copy(alpha = 0.2f),
+                                    Color(0xFFFFE885).copy(alpha = 0.5f)
+                                )
+                            )
+                        ),
+                        RoundedCornerShape(28.dp)
+                    )
             ) {
                 Column(
                     modifier = Modifier
@@ -106,20 +128,31 @@ fun HomeScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "NOVEL HOARDER",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 2.sp,
-                                color = MaterialTheme.colorScheme.primary
-                            ),
-                            modifier = Modifier.testTag("app_hero_title")
-                        )
+                        Column {
+                            Text(
+                                text = "NOVEL HOARDER",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 2.sp,
+                                    color = Color(0xFFFFD700)
+                                ),
+                                modifier = Modifier.testTag("app_hero_title")
+                            )
+                            Text(
+                                text = "OFFLINE VAULT",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Normal,
+                                    letterSpacing = 1.sp,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                                ),
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
                         Icon(
-                            imageVector = Icons.Default.MenuBook,
-                            contentDescription = "Book icon",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
+                            painter = painterResource(id = com.example.R.drawable.ic_launcher_foreground),
+                            contentDescription = "App logo",
+                            tint = Color.Unspecified,
+                            modifier = Modifier.size(56.dp)
                         )
                     }
 
@@ -446,7 +479,11 @@ fun HomeScreen(
             }
         } else {
             items(books.take(5)) { book ->
-                RecentBookRow(book = book, onClick = { onOpenBook(book.id) })
+                RecentBookRow(
+                    book = book,
+                    unreadCount = unreadCounts[book.id] ?: 0,
+                    onClick = { onOpenBook(book.id) }
+                )
             }
         }
     }
@@ -455,9 +492,17 @@ fun HomeScreen(
 @Composable
 fun RecentBookRow(
     book: BookEntity,
+    unreadCount: Int,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val readChapters = (book.totalChapters - unreadCount).coerceAtLeast(0)
+    val progressPercent = if (book.totalChapters > 0) {
+        (readChapters.toFloat() / book.totalChapters * 100).toInt().coerceIn(0, 100)
+    } else {
+        0
+    }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -523,7 +568,8 @@ fun RecentBookRow(
             Spacer(modifier = Modifier.width(16.dp))
 
             Column(
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
                     text = book.title,
@@ -542,13 +588,35 @@ fun RecentBookRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = "Chapters offline: ${book.totalChapters}",
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    modifier = Modifier.padding(top = 2.dp)
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "$progressPercent% Read",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                    Text(
+                        text = "$readChapters/${book.totalChapters} Chs",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    )
+                }
+                
+                LinearProgressIndicator(
+                    progress = if (book.totalChapters > 0) readChapters.toFloat() / book.totalChapters else 0f,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp)),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.outlineVariant
                 )
             }
 
