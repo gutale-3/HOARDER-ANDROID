@@ -26,8 +26,8 @@ object PiperVoiceCatalog {
         gender = "Female",
         description = "Kokoro high-quality female voice (Bella). Extremely clear and natural.",
         sizeMb = 82,
-        tarBz2Url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0.19.tar.bz2",
-        folderName = "kokoro-en-v0.19",
+        tarBz2Url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2",
+        folderName = "kokoro-en-v0_19",
         modelFilename = "model.onnx",
         isKokoro = true,
         kokoroSpeakerId = 0
@@ -41,8 +41,8 @@ object PiperVoiceCatalog {
         gender = "Female",
         description = "Kokoro high-quality female voice (Sarah). Smooth and melodic.",
         sizeMb = 82,
-        tarBz2Url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0.19.tar.bz2",
-        folderName = "kokoro-en-v0.19",
+        tarBz2Url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2",
+        folderName = "kokoro-en-v0_19",
         modelFilename = "model.onnx",
         isKokoro = true,
         kokoroSpeakerId = 1
@@ -56,8 +56,8 @@ object PiperVoiceCatalog {
         gender = "Male",
         description = "Kokoro high-quality male voice (Adam). Deep, articulate, and professional.",
         sizeMb = 82,
-        tarBz2Url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0.19.tar.bz2",
-        folderName = "kokoro-en-v0.19",
+        tarBz2Url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2",
+        folderName = "kokoro-en-v0_19",
         modelFilename = "model.onnx",
         isKokoro = true,
         kokoroSpeakerId = 2
@@ -71,8 +71,8 @@ object PiperVoiceCatalog {
         gender = "Male",
         description = "Kokoro high-quality male voice (Michael). Warm, inviting, and rich narrator.",
         sizeMb = 82,
-        tarBz2Url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0.19.tar.bz2",
-        folderName = "kokoro-en-v0.19",
+        tarBz2Url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2",
+        folderName = "kokoro-en-v0_19",
         modelFilename = "model.onnx",
         isKokoro = true,
         kokoroSpeakerId = 3
