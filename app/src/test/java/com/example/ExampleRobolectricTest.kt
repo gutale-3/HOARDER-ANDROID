@@ -47,6 +47,18 @@ class ExampleRobolectricTest {
     }
 
     @Test
+    fun testMainViewModelInstantiation() {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        try {
+            val viewModel = com.example.viewmodel.MainViewModel(app)
+            assertNotNull(viewModel)
+        } catch (t: Throwable) {
+            t.printStackTrace()
+            throw t
+        }
+    }
+
+    @Test
     fun testApplyGlossaryReplaceWorksCorrectly() {
         val originalText = "The translator did a quick job on tomato near the river."
         val glossary = listOf(
