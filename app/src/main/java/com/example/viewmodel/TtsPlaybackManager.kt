@@ -114,7 +114,6 @@ class TtsPlaybackManager(
         ttsAutoScrollEnabled = prefs.getBoolean("tts_auto_scroll", true)
 
         registerTtsReceiver()
-        loadResumableTtsSession()
     }
 
     fun unregister() {
@@ -887,7 +886,10 @@ class TtsPlaybackManager(
             .apply()
 
         // Sync with reading progress
-        saveReadingProgress(book.id, chapter.id, if (para < 0) 0 else para)
+        prefs.edit()
+            .putInt("progress_para_${book.id}_${chapter.id}", if (para < 0) 0 else para)
+            .putString("progress_chapter_${book.id}", chapter.id)
+            .apply()
 
         // Make sure the lastReadChapterId matches
         if (book.lastReadChapterId != chapter.id) {
@@ -961,13 +963,6 @@ class TtsPlaybackManager(
         val current = ttsActiveParagraphIndex ?: -1
         val next = current + delta
         seekToParagraph(next)
-    }
-
-    fun saveReadingProgress(bookId: String, chapterId: String, paragraphIndex: Int) {
-        prefs.edit()
-            .putInt("progress_para_${bookId}_${chapterId}", paragraphIndex)
-            .putString("progress_chapter_${bookId}", chapterId)
-            .apply()
     }
 
     fun addLog(msg: String) {
