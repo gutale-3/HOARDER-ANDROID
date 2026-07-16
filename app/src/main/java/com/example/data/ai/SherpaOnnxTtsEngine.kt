@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.util.Log
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
@@ -114,6 +115,7 @@ class SherpaOnnxTtsEngine(private val context: Context) {
         if (result.isSuccess) {
             onSuccess()
         } else {
+            Log.e("KokoroDownload", "downloadModel failed: ${result.exceptionOrNull()?.message}", result.exceptionOrNull())
             onFailure(result.exceptionOrNull()?.message ?: "Failed to download model")
         }
     }
