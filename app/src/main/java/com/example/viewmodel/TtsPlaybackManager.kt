@@ -17,6 +17,7 @@ import androidx.media.app.NotificationCompat.MediaStyle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import android.util.Log
 import com.example.data.local.*
 import com.example.data.repository.NovelRepository
 import com.example.data.ai.SherpaOnnxTtsEngine
@@ -141,6 +142,7 @@ class TtsPlaybackManager(
     }
 
     fun downloadPremiumVoice(voice: PiperVoice) {
+        Log.d("KokoroDownload", "downloadPremiumVoice called for ${voice.id}, premiumVoiceDownloading=$premiumVoiceDownloading")
         if (premiumVoiceDownloading) return
         sherpaOnnxTtsEngine.selectedVoiceId = voice.id
         premiumVoiceDownloading = true
