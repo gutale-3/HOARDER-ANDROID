@@ -524,7 +524,9 @@ class TtsPlaybackManager(
                 previewingVoiceId = voiceOption.id
                 sherpaOnnxTtsEngine.selectedVoiceId = voiceOption.id
                 sherpaOnnxTtsEngine.selectedSpeakerId = getSpeakerId(voiceOption.id)
-                sherpaOnnxTtsEngine.initOnnx()
+                withContext(Dispatchers.IO) {
+                    sherpaOnnxTtsEngine.initOnnx()
+                }
                 sherpaOnnxTtsEngine.speak(
                     text = sampleText,
                     speed = ttsSpeed,
@@ -687,7 +689,9 @@ class TtsPlaybackManager(
 
                 sherpaOnnxTtsEngine.selectedVoiceId = selectedVoiceId
                 sherpaOnnxTtsEngine.selectedSpeakerId = getSpeakerId(selectedVoiceId)
-                sherpaOnnxTtsEngine.initOnnx()
+                withContext(Dispatchers.IO) {
+                    sherpaOnnxTtsEngine.initOnnx()
+                }
                 sherpaOnnxTtsEngine.speak(
                     text = textToSpeak,
                     speed = ttsSpeed,
