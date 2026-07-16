@@ -145,6 +145,7 @@ class TtsPlaybackManager(
         sherpaOnnxTtsEngine.selectedVoiceId = voice.id
         premiumVoiceDownloading = true
         premiumVoiceDownloadError = null
+        premiumVoiceDownloadProgress = 0
         coroutineScope.launch(Dispatchers.Main) {
             sherpaOnnxTtsEngine.downloadModel(
                 onProgress = { progress ->
