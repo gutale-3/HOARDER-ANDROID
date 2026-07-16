@@ -110,15 +110,15 @@ fun ReaderScreen(
                         val lux = it.values[0]
                         if (lux < 15f) {
                             if (viewModel.readerTheme != "oled" && viewModel.readerTheme != "charcoal") {
-                                viewModel.updateReaderTheme("oled")
+                                viewModel.settings.updateReaderTheme("oled")
                             }
                         } else if (lux < 250f) {
                             if (viewModel.readerTheme != "sepia") {
-                                viewModel.updateReaderTheme("sepia")
+                                viewModel.settings.updateReaderTheme("sepia")
                             }
                         } else {
                             if (viewModel.readerTheme != "light") {
-                                viewModel.updateReaderTheme("light")
+                                viewModel.settings.updateReaderTheme("light")
                             }
                         }
                     }
@@ -146,7 +146,7 @@ fun ReaderScreen(
 
     // AI states
     val polishedChaptersLoading by viewModel.polishedChaptersLoading.collectAsState()
-    val polishedChapter by viewModel.getPolishedChapterFlow(currentChapterId).collectAsState(null)
+    val polishedChapter by viewModel.aiFeatures.getPolishedChapterFlow(currentChapterId).collectAsState(null)
     var readPolishedTranslation by remember { mutableStateOf(true) }
     var showRecapDialog by remember { mutableStateOf(false) }
     var showAskAiDialog by remember { mutableStateOf(false) }
@@ -185,7 +185,7 @@ fun ReaderScreen(
     LaunchedEffect(activeChapter) {
         if (activeChapter != null && bookState != null) {
             viewModel.repository.updateBook(bookState!!.copy(lastReadChapterId = activeChapter.id))
-            viewModel.triggerAutoDownloadNextChapters(bookState!!, activeChapter)
+            viewModel.aiFeatures.triggerAutoDownloadNextChapters(bookState!!, activeChapter)
         }
     }
 
@@ -202,7 +202,7 @@ fun ReaderScreen(
     var drawerTabSelected by remember { mutableStateOf(0) } // 0 = Chapters, 1 = Bookmarks
     var chapterSubTab by remember { mutableStateOf(0) } // 0 = Active, 1 = Archived
     var showAutoArchiveSettingDialog by remember { mutableStateOf(false) }
-    val archivedChapters by viewModel.getArchivedChaptersFlow(bookId).collectAsState(emptyList())
+    val archivedChapters by viewModel.progress.getArchivedChaptersFlow(bookId).collectAsState(emptyList())
 
     var showBookmarkDialog by remember { mutableStateOf(false) }
     var selectedParaIndexForBookmark by remember { mutableStateOf<Int?>(null) }
@@ -437,7 +437,7 @@ fun ReaderScreen(
                             if (chapterSubTab == 0) {
                                 TextButton(
                                     onClick = {
-                                        viewModel.updateChaptersReadStatus(selectedChapters.toList(), true)
+                                        viewModel.progress.updateChaptersReadStatus(selectedChapters.toList(), true)
                                         isMultiSelectMode = false
                                         selectedChapters = emptySet()
                                     }
@@ -451,7 +451,7 @@ fun ReaderScreen(
                                 
                                 TextButton(
                                     onClick = {
-                                        viewModel.updateChaptersReadStatus(selectedChapters.toList(), false)
+                                        viewModel.progress.updateChaptersReadStatus(selectedChapters.toList(), false)
                                         isMultiSelectMode = false
                                         selectedChapters = emptySet()
                                     }
@@ -465,7 +465,7 @@ fun ReaderScreen(
 
                                 TextButton(
                                     onClick = {
-                                        viewModel.updateChaptersArchiveStatus(selectedChapters.toList(), true)
+                                        viewModel.progress.updateChaptersArchiveStatus(selectedChapters.toList(), true)
                                         isMultiSelectMode = false
                                         selectedChapters = emptySet()
                                     }
@@ -477,7 +477,7 @@ fun ReaderScreen(
                             } else {
                                 TextButton(
                                     onClick = {
-                                        viewModel.updateChaptersArchiveStatus(selectedChapters.toList(), false)
+                                        viewModel.progress.updateChaptersArchiveStatus(selectedChapters.toList(), false)
                                         isMultiSelectMode = false
                                         selectedChapters = emptySet()
                                     }
@@ -558,7 +558,7 @@ fun ReaderScreen(
                                                         tint = if (ch.isRead) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) 
                                                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                                                         modifier = Modifier.size(20.dp).clickable {
-                                                            viewModel.updateChaptersReadStatus(listOf(ch.id), !ch.isRead)
+                                                            viewModel.progress.updateChaptersReadStatus(listOf(ch.id), !ch.isRead)
                                                         }
                                                     )
                                                 } else {
@@ -568,7 +568,7 @@ fun ReaderScreen(
                                                         contentDescription = "Archived",
                                                         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                                                         modifier = Modifier.size(20.dp).clickable {
-                                                            viewModel.updateChaptersArchiveStatus(listOf(ch.id), false)
+                                                            viewModel.progress.updateChaptersArchiveStatus(listOf(ch.id), false)
                                                         }
                                                     )
                                                 }
@@ -600,7 +600,7 @@ fun ReaderScreen(
                                                         } else {
                                                             IconButton(
                                                                 onClick = {
-                                                                    viewModel.rescrapeSingleChapter(ch) { success, msg ->
+                                                                    viewModel.scraping.rescrapeSingleChapter(ch) { success, msg ->
                                                                         android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
                                                                     }
                                                                 },
@@ -685,11 +685,11 @@ fun ReaderScreen(
                             val bk = bookState
                             if (activeCh != null && bk != null) {
                                 if (viewModel.ttsIsPlaying && viewModel.ttsPlayingChapter?.id == activeCh.id) {
-                                    viewModel.pauseTts()
+                                    viewModel.tts.pauseTts()
                                 } else if (viewModel.ttsIsPaused && viewModel.ttsPlayingChapter?.id == activeCh.id) {
-                                    viewModel.resumeTts()
+                                    viewModel.tts.resumeTts()
                                 } else {
-                                    viewModel.speak(activeCh.content, bk, activeCh)
+                                    viewModel.tts.speak(activeCh.content, bk, activeCh)
                                 }
                             }
                         }) {
@@ -716,7 +716,7 @@ fun ReaderScreen(
                             IconButton(onClick = {
                                 val activeCh = activeChapter
                                 if (activeCh != null) {
-                                    viewModel.rescrapeSingleChapter(activeCh) { success, msg ->
+                                    viewModel.scraping.rescrapeSingleChapter(activeCh) { success, msg ->
                                         android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
                                     }
                                 }
@@ -771,7 +771,7 @@ fun ReaderScreen(
                                             showMenu = false
                                             val activeCh = activeChapter
                                             if (activeCh != null) {
-                                                viewModel.rescrapeSingleChapter(activeCh) { success, msg ->
+                                                viewModel.scraping.rescrapeSingleChapter(activeCh) { success, msg ->
                                                     android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
                                                 }
                                             }
@@ -888,7 +888,7 @@ fun ReaderScreen(
                             if (currentChapterId == initialChapterId && initialParaIndex >= 0) {
                                 lazyListState.scrollToItem(initialParaIndex + 3)
                             } else {
-                                val savedPara = viewModel.getSavedParagraphIndex(bookId, currentChapterId)
+                                val savedPara = viewModel.progress.getSavedParagraphIndex(bookId, currentChapterId)
                                 if (savedPara > 0) {
                                     lazyListState.scrollToItem(savedPara + 3)
                                 } else {
@@ -962,7 +962,7 @@ fun ReaderScreen(
                         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                             if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE || event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
                                 if (currentParagraphIndex >= 0) {
-                                    viewModel.autoSaveProgressAndBookmark(
+                                    viewModel.progress.autoSaveProgressAndBookmark(
                                         bookId = bookId,
                                         chapterId = activeChapter.id,
                                         paragraphIndex = currentParagraphIndex,
@@ -975,7 +975,7 @@ fun ReaderScreen(
                         onDispose {
                             lifecycleOwner.lifecycle.removeObserver(observer)
                             if (currentParagraphIndex >= 0) {
-                                viewModel.autoSaveProgressAndBookmark(
+                                viewModel.progress.autoSaveProgressAndBookmark(
                                     bookId = bookId,
                                     chapterId = activeChapter.id,
                                     paragraphIndex = currentParagraphIndex,
@@ -1042,7 +1042,7 @@ fun ReaderScreen(
                                     )
                                 } else {
                                     Button(
-                                        onClick = { viewModel.polishChapter(activeChapter) },
+                                        onClick = { viewModel.aiFeatures.polishChapter(activeChapter) },
                                         enabled = !isPolishing,
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(
@@ -1195,7 +1195,7 @@ fun ReaderScreen(
             contract = ActivityResultContracts.GetContent()
         ) { uri ->
             uri?.let {
-                viewModel.importCustomFont(context, it)
+                viewModel.settings.importCustomFont(context, it)
             }
         }
 
@@ -1232,7 +1232,7 @@ fun ReaderScreen(
                                             .height(36.dp)
                                             .clip(RoundedCornerShape(8.dp))
                                             .background(color)
-                                            .clickable { viewModel.updateReaderTheme(themeKey) }
+                                            .clickable { viewModel.settings.updateReaderTheme(themeKey) }
                                             .border(
                                                 width = if (selected) 2.dp else 1.dp,
                                                 color = if (selected) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.3f),
@@ -1267,7 +1267,7 @@ fun ReaderScreen(
                                             .height(36.dp)
                                             .clip(RoundedCornerShape(8.dp))
                                             .background(color)
-                                            .clickable { viewModel.updateReaderTheme(themeKey) }
+                                            .clickable { viewModel.settings.updateReaderTheme(themeKey) }
                                             .border(
                                                 width = if (selected) 2.dp else 1.dp,
                                                 color = if (selected) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.3f),
@@ -1296,7 +1296,7 @@ fun ReaderScreen(
                         )
                         Slider(
                             value = viewModel.readerFontSize.toFloat(),
-                            onValueChange = { viewModel.updateFontSize(it.toInt()) },
+                            onValueChange = { viewModel.settings.updateFontSize(it.toInt()) },
                             valueRange = 12f..40f,
                             steps = 28
                         )
@@ -1310,7 +1310,7 @@ fun ReaderScreen(
                         )
                         Slider(
                             value = viewModel.readerLineHeight,
-                            onValueChange = { viewModel.updateReaderLineHeight(it) },
+                            onValueChange = { viewModel.settings.updateReaderLineHeight(it) },
                             valueRange = 1.0f..2.5f
                         )
                     }
@@ -1323,7 +1323,7 @@ fun ReaderScreen(
                         )
                         Slider(
                             value = viewModel.readerMargin.toFloat(),
-                            onValueChange = { viewModel.updateReaderMargin(it.toInt()) },
+                            onValueChange = { viewModel.settings.updateReaderMargin(it.toInt()) },
                             valueRange = 8f..48f,
                             steps = 5
                         )
@@ -1337,7 +1337,7 @@ fun ReaderScreen(
                         )
                         Slider(
                             value = viewModel.readerLetterSpacing,
-                            onValueChange = { viewModel.updateReaderLetterSpacing(it) },
+                            onValueChange = { viewModel.settings.updateReaderLetterSpacing(it) },
                             valueRange = -0.05f..0.25f
                         )
                     }
@@ -1360,7 +1360,7 @@ fun ReaderScreen(
                                 val selected = viewModel.readerFontFamily == fontKey
                                 FilterChip(
                                     selected = selected,
-                                    onClick = { viewModel.updateFontFamily(fontKey) },
+                                    onClick = { viewModel.settings.updateFontFamily(fontKey) },
                                     label = { Text(name) },
                                     modifier = Modifier.weight(1f),
                                     shape = RoundedCornerShape(8.dp)
@@ -1372,7 +1372,7 @@ fun ReaderScreen(
                             val selected = viewModel.readerFontFamily == "custom"
                             FilterChip(
                                 selected = selected,
-                                onClick = { viewModel.updateFontFamily("custom") },
+                                onClick = { viewModel.settings.updateFontFamily("custom") },
                                 label = { Text("Custom: ${viewModel.readerCustomFontName}") },
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth()
@@ -1411,7 +1411,7 @@ fun ReaderScreen(
                         }
                         Switch(
                             checked = viewModel.readerAmbientSyncEnabled,
-                            onCheckedChange = { viewModel.updateAmbientSyncEnabled(it) }
+                            onCheckedChange = { viewModel.settings.updateAmbientSyncEnabled(it) }
                         )
                     }
 
@@ -1434,7 +1434,7 @@ fun ReaderScreen(
                         }
                         Switch(
                             checked = viewModel.readerJustificationEnabled,
-                            onCheckedChange = { viewModel.updateJustificationEnabled(it) }
+                            onCheckedChange = { viewModel.settings.updateJustificationEnabled(it) }
                         )
                     }
 
@@ -1457,7 +1457,7 @@ fun ReaderScreen(
                         }
                         Switch(
                             checked = viewModel.readerHyphenationEnabled,
-                            onCheckedChange = { viewModel.updateHyphenationEnabled(it) }
+                            onCheckedChange = { viewModel.settings.updateHyphenationEnabled(it) }
                         )
                     }
 
@@ -1480,7 +1480,7 @@ fun ReaderScreen(
                         }
                         Switch(
                             checked = viewModel.focusModeEnabled,
-                            onCheckedChange = { viewModel.toggleFocusMode() }
+                            onCheckedChange = { viewModel.tts.toggleFocusMode() }
                         )
                     }
 
@@ -1503,7 +1503,7 @@ fun ReaderScreen(
                         }
                         Switch(
                             checked = viewModel.ttsAutoScrollEnabled,
-                            onCheckedChange = { viewModel.toggleTtsAutoScroll() }
+                            onCheckedChange = { viewModel.tts.toggleTtsAutoScroll() }
                         )
                     }
                 }
@@ -1547,7 +1547,7 @@ fun ReaderScreen(
                 TextButton(
                     onClick = {
                         val currentActiveChapterIsDeleted = chaptersToDelete.contains(currentChapterId)
-                        viewModel.deleteChapters(bookId, chaptersToDelete) { msg ->
+                        viewModel.progress.deleteChapters(bookId, chaptersToDelete) { msg ->
                             android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
                             if (currentActiveChapterIsDeleted) {
                                 scope.launch {
@@ -1691,7 +1691,7 @@ fun ReaderScreen(
                                 .clickable {
                                     scope.launch {
                                         lazyListState.scrollToItem(selectedParaIndexForBookmark!! + 3)
-                                        viewModel.saveReadingProgress(
+                                        viewModel.progress.saveReadingProgress(
                                             bookId = bookId,
                                             chapterId = currentChapterId,
                                             paragraphIndex = selectedParaIndexForBookmark!!
@@ -1732,7 +1732,7 @@ fun ReaderScreen(
                                     .fillMaxWidth()
                                     .background(MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
                                     .clickable {
-                                        viewModel.speak(
+                                        viewModel.tts.speak(
                                             text = activeCh.content,
                                             book = bk,
                                             chapter = activeCh,

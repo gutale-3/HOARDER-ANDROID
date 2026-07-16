@@ -126,7 +126,7 @@ fun AiSettingsDialog(
                             }
 
                             Card(
-                                onClick = { viewModel.updateActiveAiProvider(provider.id) },
+                                onClick = { viewModel.settings.updateActiveAiProvider(provider.id) },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("ai_provider_card_${provider.id}"),
@@ -152,7 +152,7 @@ fun AiSettingsDialog(
                                 ) {
                                     RadioButton(
                                         selected = isSelected,
-                                        onClick = { viewModel.updateActiveAiProvider(provider.id) }
+                                        onClick = { viewModel.settings.updateActiveAiProvider(provider.id) }
                                     )
                                     Column(modifier = Modifier.weight(1.0f)) {
                                         Text(
@@ -229,7 +229,7 @@ fun AiSettingsDialog(
                             value = apiKeyText,
                             onValueChange = {
                                 apiKeyText = it
-                                viewModel.updateGeminiApiKey(it)
+                                viewModel.settings.updateGeminiApiKey(it)
                                 validationResult = null
                                 wasValidationSuccessful = null
                             },
@@ -255,7 +255,7 @@ fun AiSettingsDialog(
                                         }
                                         IconButton(onClick = {
                                             apiKeyText = ""
-                                            viewModel.updateGeminiApiKey("")
+                                            viewModel.settings.updateGeminiApiKey("")
                                             validationResult = null
                                             wasValidationSuccessful = null
                                         }) {
@@ -274,7 +274,7 @@ fun AiSettingsDialog(
                             Button(
                                 onClick = {
                                     isCurrentlyValidating = true
-                                    viewModel.validateApiKey(apiKeyText) { success, msg ->
+                                    viewModel.aiFeatures.validateApiKey(apiKeyText) { success, msg ->
                                         isCurrentlyValidating = false
                                         wasValidationSuccessful = success
                                         validationResult = msg
@@ -353,7 +353,7 @@ fun AiSettingsDialog(
                                     Text("Glossary Generator Prompt", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
                                     OutlinedTextField(
                                         value = viewModel.glossaryPrompt,
-                                        onValueChange = { viewModel.updateGlossaryPrompt(it) },
+                                        onValueChange = { viewModel.settings.updateGlossaryPrompt(it) },
                                         minLines = 3,
                                         maxLines = 5,
                                         modifier = Modifier.fillMaxWidth(),
@@ -366,7 +366,7 @@ fun AiSettingsDialog(
                                     Text("Prose Polish Prompt", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
                                     OutlinedTextField(
                                         value = viewModel.polishPrompt,
-                                        onValueChange = { viewModel.updatePolishPrompt(it) },
+                                        onValueChange = { viewModel.settings.updatePolishPrompt(it) },
                                         minLines = 3,
                                         maxLines = 5,
                                         modifier = Modifier.fillMaxWidth(),
@@ -379,7 +379,7 @@ fun AiSettingsDialog(
                                     Text("Chapter Summary Prompt", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
                                     OutlinedTextField(
                                         value = viewModel.recapPrompt,
-                                        onValueChange = { viewModel.updateRecapPrompt(it) },
+                                        onValueChange = { viewModel.settings.updateRecapPrompt(it) },
                                         minLines = 3,
                                         maxLines = 5,
                                         modifier = Modifier.fillMaxWidth(),

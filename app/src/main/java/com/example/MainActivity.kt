@@ -103,7 +103,7 @@ class MainActivity : ComponentActivity() {
                         DropdownMenuItem(
                           text = { Text(theme.displayName) },
                           onClick = {
-                            viewModel.updateTheme(theme)
+                            viewModel.settings.updateTheme(theme)
                             showThemeMenu = false
                           },
                           leadingIcon = {

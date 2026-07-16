@@ -56,7 +56,7 @@ fun TtsPlayerBar(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { viewModel.resumeLastSession() }
+                        .clickable { viewModel.progress.resumeLastSession() }
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -82,7 +82,7 @@ fun TtsPlayerBar(
                         )
                     }
                     IconButton(
-                        onClick = { viewModel.clearTtsProgress(); viewModel.loadResumableTtsSession() },
+                        onClick = { viewModel.progress.clearTtsProgress(); viewModel.progress.loadResumableTtsSession() },
                         modifier = Modifier.size(32.dp)
                     ) {
                         Icon(
@@ -147,9 +147,9 @@ fun TtsPlayerBar(
                 IconButton(
                     onClick = {
                         if (viewModel.ttsIsPlaying) {
-                            viewModel.pauseTts()
+                            viewModel.tts.pauseTts()
                         } else {
-                            viewModel.resumeTts()
+                            viewModel.tts.resumeTts()
                         }
                     },
                     modifier = Modifier.size(36.dp)
@@ -163,7 +163,7 @@ fun TtsPlayerBar(
                 }
 
                 IconButton(
-                    onClick = { viewModel.stopTts() },
+                    onClick = { viewModel.tts.stopTts() },
                     modifier = Modifier.size(36.dp)
                 ) {
                     Icon(
@@ -266,7 +266,7 @@ fun TtsPlayerBar(
                         )
                     }
 
-                    IconButton(onClick = { viewModel.stopTts() }) {
+                    IconButton(onClick = { viewModel.tts.stopTts() }) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Stop",
@@ -309,7 +309,7 @@ fun TtsPlayerBar(
                     onValueChange = { draggingValue = it },
                     onValueChangeFinished = {
                         draggingValue?.let {
-                            viewModel.seekToParagraph(it.toInt())
+                            viewModel.progress.seekToParagraph(it.toInt())
                         }
                         draggingValue = null
                     },
@@ -331,7 +331,7 @@ fun TtsPlayerBar(
             ) {
                 // Auto-Scroll Toggle Button
                 IconButton(
-                    onClick = { viewModel.toggleTtsAutoScroll() },
+                    onClick = { viewModel.tts.toggleTtsAutoScroll() },
                     modifier = Modifier.size(40.dp).testTag("tts_quick_autoscroll_btn")
                 ) {
                     Icon(
@@ -346,7 +346,7 @@ fun TtsPlayerBar(
 
                 // Prev Chapter
                 IconButton(
-                    onClick = { viewModel.playPreviousChapterTts() },
+                    onClick = { viewModel.tts.playPreviousChapterTts() },
                     modifier = Modifier.size(40.dp)
                 ) {
                     Icon(
@@ -361,7 +361,7 @@ fun TtsPlayerBar(
 
                 // Skip back 1 paragraph
                 IconButton(
-                    onClick = { viewModel.skipParagraph(-1) },
+                    onClick = { viewModel.progress.skipParagraph(-1) },
                     modifier = Modifier.size(40.dp)
                 ) {
                     Icon(
@@ -378,9 +378,9 @@ fun TtsPlayerBar(
                 FilledIconButton(
                     onClick = {
                         if (viewModel.ttsIsPlaying) {
-                            viewModel.pauseTts()
+                            viewModel.tts.pauseTts()
                         } else {
-                            viewModel.resumeTts()
+                            viewModel.tts.resumeTts()
                         }
                     },
                     modifier = Modifier.size(48.dp),
@@ -400,7 +400,7 @@ fun TtsPlayerBar(
 
                 // Skip forward 1 paragraph
                 IconButton(
-                    onClick = { viewModel.skipParagraph(1) },
+                    onClick = { viewModel.progress.skipParagraph(1) },
                     modifier = Modifier.size(40.dp)
                 ) {
                     Icon(
@@ -415,7 +415,7 @@ fun TtsPlayerBar(
 
                 // Next Chapter
                 IconButton(
-                    onClick = { viewModel.playNextChapterTts() },
+                    onClick = { viewModel.tts.playNextChapterTts() },
                     modifier = Modifier.size(40.dp)
                 ) {
                     Icon(
@@ -431,7 +431,7 @@ fun TtsPlayerBar(
                 // Voice Settings Button
                 IconButton(
                     onClick = {
-                        viewModel.initTts()
+                        viewModel.tts.initTts()
                         showSettingsDialog = true
                     },
                     modifier = Modifier.size(40.dp)
@@ -548,7 +548,7 @@ fun TtsPlayerBar(
                                     timerOptions.forEach { (mins, label) ->
                                         val isSelected = viewModel.sleepTimerMinutes == mins
                                         OutlinedButton(
-                                            onClick = { viewModel.startSleepTimer(mins) },
+                                            onClick = { viewModel.tts.startSleepTimer(mins) },
                                             modifier = Modifier.weight(1f),
                                             contentPadding = PaddingValues(vertical = 12.dp),
                                             border = BorderStroke(
@@ -591,7 +591,7 @@ fun TtsPlayerBar(
                                 Slider(
                                     value = viewModel.ttsSpeed,
                                     onValueChange = { speed ->
-                                        viewModel.updateTtsSettings(viewModel.ttsPitch, speed)
+                                        viewModel.tts.updateTtsSettings(viewModel.ttsPitch, speed)
                                     },
                                     valueRange = 0.5f..2.5f,
                                     steps = 19
@@ -605,7 +605,7 @@ fun TtsPlayerBar(
                                         val isSelected = Math.abs(viewModel.ttsSpeed - speedVal) < 0.05f
                                         val label = if (speedVal == 1.0f) "Normal (1.0x)" else "${speedVal}x"
                                         SuggestionChip(
-                                            onClick = { viewModel.updateTtsSettings(viewModel.ttsPitch, speedVal) },
+                                            onClick = { viewModel.tts.updateTtsSettings(viewModel.ttsPitch, speedVal) },
                                             label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                                             colors = SuggestionChipDefaults.suggestionChipColors(
                                                 containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
@@ -646,7 +646,7 @@ fun TtsPlayerBar(
                                 Slider(
                                     value = viewModel.ttsPitch,
                                     onValueChange = { pitch ->
-                                        viewModel.updateTtsSettings(pitch, viewModel.ttsSpeed)
+                                        viewModel.tts.updateTtsSettings(pitch, viewModel.ttsSpeed)
                                     },
                                     valueRange = 0.5f..1.5f,
                                     steps = 9
@@ -663,7 +663,7 @@ fun TtsPlayerBar(
                                     ).forEach { (pitchVal, label, desc) ->
                                         val isSelected = Math.abs(viewModel.ttsPitch - pitchVal) < 0.05f
                                         SuggestionChip(
-                                            onClick = { viewModel.updateTtsSettings(pitchVal, viewModel.ttsSpeed) },
+                                            onClick = { viewModel.tts.updateTtsSettings(pitchVal, viewModel.ttsSpeed) },
                                             label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                                             colors = SuggestionChipDefaults.suggestionChipColors(
                                                 containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
@@ -704,7 +704,7 @@ fun TtsPlayerBar(
                                 }
                                 Switch(
                                     checked = viewModel.ttsAutoScrollEnabled,
-                                    onCheckedChange = { viewModel.toggleTtsAutoScroll() }
+                                    onCheckedChange = { viewModel.tts.toggleTtsAutoScroll() }
                                 )
                             }
                         }
@@ -803,7 +803,7 @@ fun TtsPlayerBar(
                                         val isSelected = voice.id == viewModel.selectedVoiceId
                                         if (voice.id.startsWith("vits-piper-") || voice.id.startsWith("kokoro-")) {
                                             val piperVoice = com.example.data.ai.PiperVoiceCatalog.getVoiceById(voice.id)
-                                            val isDownloaded = viewModel.isVoiceDownloaded(piperVoice)
+                                            val isDownloaded = viewModel.tts.isVoiceDownloaded(piperVoice)
                                             val isThisVoiceDownloading = viewModel.premiumVoiceDownloading && viewModel.sherpaOnnxTtsEngine.selectedVoiceId == voice.id
                                             
                                             Card(
@@ -812,9 +812,9 @@ fun TtsPlayerBar(
                                                     .clip(RoundedCornerShape(16.dp))
                                                     .clickable {
                                                         if (isDownloaded) {
-                                                            viewModel.setTtsVoice(voice)
+                                                            viewModel.tts.setTtsVoice(voice)
                                                         } else if (!isThisVoiceDownloading) {
-                                                            viewModel.downloadPremiumVoice(piperVoice)
+                                                            viewModel.tts.downloadPremiumVoice(piperVoice)
                                                         }
                                                     },
                                                 colors = CardDefaults.cardColors(
@@ -950,9 +950,9 @@ fun TtsPlayerBar(
                                                             IconButton(
                                                                 onClick = {
                                                                     if (isPlayingPreview) {
-                                                                        viewModel.stopVoicePreview()
+                                                                        viewModel.tts.stopVoicePreview()
                                                                     } else {
-                                                                        viewModel.playVoicePreview(voice)
+                                                                        viewModel.tts.playVoicePreview(voice)
                                                                     }
                                                                 },
                                                                 modifier = Modifier.size(36.dp)
@@ -967,7 +967,7 @@ fun TtsPlayerBar(
 
                                                             if (isDownloaded) {
                                                                 IconButton(
-                                                                    onClick = { viewModel.deletePremiumVoice(piperVoice) },
+                                                                    onClick = { viewModel.tts.deletePremiumVoice(piperVoice) },
                                                                     modifier = Modifier.size(36.dp)
                                                                 ) {
                                                                     Icon(
@@ -983,7 +983,7 @@ fun TtsPlayerBar(
 
                                                     // Speaker ID input if multi-speaker
                                                     if (isSelected && voice.id == "vits-piper-en_US-libritts_r-medium") {
-                                                        var speakerIdInput by remember { mutableStateOf(viewModel.getSpeakerId(voice.id).toString()) }
+                                                        var speakerIdInput by remember { mutableStateOf(viewModel.tts.getSpeakerId(voice.id).toString()) }
                                                         Row(
                                                             modifier = Modifier
                                                                 .fillMaxWidth()
@@ -1003,7 +1003,7 @@ fun TtsPlayerBar(
                                                                     if (newVal.all { it.isDigit() }) {
                                                                         speakerIdInput = newVal
                                                                         val sId = newVal.toIntOrNull() ?: 0
-                                                                        viewModel.saveSpeakerId(voice.id, sId)
+                                                                        viewModel.tts.saveSpeakerId(voice.id, sId)
                                                                     }
                                                                 },
                                                                 modifier = Modifier.width(70.dp).height(32.dp),
@@ -1058,7 +1058,7 @@ fun TtsPlayerBar(
                                                     .fillMaxWidth()
                                                     .clip(RoundedCornerShape(16.dp))
                                                     .clickable {
-                                                        viewModel.setTtsVoice(voice)
+                                                        viewModel.tts.setTtsVoice(voice)
                                                     },
                                                 colors = CardDefaults.cardColors(
                                                     containerColor = if (isSelected) {
@@ -1142,9 +1142,9 @@ fun TtsPlayerBar(
                                                     IconButton(
                                                         onClick = {
                                                             if (isPlayingPreview) {
-                                                                viewModel.stopVoicePreview()
+                                                                viewModel.tts.stopVoicePreview()
                                                             } else {
-                                                                viewModel.playVoicePreview(voice)
+                                                                viewModel.tts.playVoicePreview(voice)
                                                             }
                                                         },
                                                         modifier = Modifier.size(36.dp)

@@ -345,7 +345,7 @@ fun HomeScreen(
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { viewModel.resumeLastSession() }
+                        .clickable { viewModel.progress.resumeLastSession() }
                         .testTag("home_continue_listening_card"),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
@@ -405,8 +405,8 @@ fun HomeScreen(
                         // Close button to clear progress
                         IconButton(
                             onClick = {
-                                viewModel.clearTtsProgress()
-                                viewModel.loadResumableTtsSession()
+                                viewModel.progress.clearTtsProgress()
+                                viewModel.progress.loadResumableTtsSession()
                             },
                             modifier = Modifier.size(36.dp)
                         ) {

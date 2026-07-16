@@ -35,6 +35,8 @@ class TtsPlaybackManager(
 ) {
     private val prefs = application.getSharedPreferences("novel_hoarder_prefs", Context.MODE_PRIVATE)
 
+    var onSpeakStarted: (() -> Unit)? = null
+
     var focusModeEnabled by mutableStateOf(false)
     var ttsAutoScrollEnabled by mutableStateOf(true)
     var ttsTotalParagraphs by mutableStateOf(0)
@@ -644,6 +646,7 @@ class TtsPlaybackManager(
     }
 
     fun speak(text: String, book: BookEntity, chapter: ChapterEntity, startFromParagraphIndex: Int = -1) {
+        onSpeakStarted?.invoke()
         // Save chapter progress & mark chapter as read
         coroutineScope.launch(Dispatchers.IO) {
             val updatedBook = book.copy(lastReadChapterId = chapter.id)

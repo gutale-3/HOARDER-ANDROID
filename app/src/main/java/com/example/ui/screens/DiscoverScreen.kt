@@ -330,7 +330,7 @@ fun DiscoverScreen(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
-                    onClick = { viewModel.discoverNovels(queryText) },
+                    onClick = { viewModel.aiFeatures.discoverNovels(queryText) },
                     enabled = queryText.isNotBlank() && !viewModel.isDiscovering,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier

@@ -116,7 +116,7 @@ fun ScrapeScreen(
                         }
                     }
                     Button(
-                        onClick = { viewModel.launchInteractiveBrowser() },
+                        onClick = { viewModel.scraping.launchInteractiveBrowser() },
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary
@@ -346,7 +346,7 @@ fun ScrapeScreen(
                     ) {
                         // Continue Scraping Button
                         Button(
-                            onClick = { viewModel.continueScraping() },
+                            onClick = { viewModel.scraping.continueScraping() },
                             enabled = !viewModel.isScraping && !viewModel.isSearchingMissing,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -367,7 +367,7 @@ fun ScrapeScreen(
 
                         // Search Missing Chapters Button
                         Button(
-                            onClick = { viewModel.searchMissingChapters() },
+                            onClick = { viewModel.scraping.searchMissingChapters() },
                             enabled = !viewModel.isScraping && !viewModel.isSearchingMissing,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.tertiaryContainer,
@@ -413,7 +413,7 @@ fun ScrapeScreen(
 
                             if (viewModel.missingChaptersToScrape.isNotEmpty()) {
                                 Button(
-                                    onClick = { viewModel.startScrapingMissing() },
+                                    onClick = { viewModel.scraping.startScrapingMissing() },
                                     enabled = !viewModel.isScraping,
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = MaterialTheme.colorScheme.primary
@@ -449,7 +449,7 @@ fun ScrapeScreen(
                 ) {
                     if (viewModel.isScraping) {
                         Button(
-                            onClick = { viewModel.stopScraping() },
+                            onClick = { viewModel.scraping.stopScraping() },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.error
                             ),
@@ -466,7 +466,7 @@ fun ScrapeScreen(
 
                         if (viewModel.isScrapePaused) {
                             Button(
-                                onClick = { viewModel.resumeScraping() },
+                                onClick = { viewModel.scraping.resumeScraping() },
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.tertiary
                                 ),
@@ -482,7 +482,7 @@ fun ScrapeScreen(
                             }
                         } else {
                             Button(
-                                onClick = { viewModel.pauseScraping() },
+                                onClick = { viewModel.scraping.pauseScraping() },
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.secondary
                                 ),
@@ -499,7 +499,7 @@ fun ScrapeScreen(
                         }
 
                         Button(
-                            onClick = { viewModel.skipCurrentChapter() },
+                            onClick = { viewModel.scraping.skipCurrentChapter() },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
                                 contentColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -516,7 +516,7 @@ fun ScrapeScreen(
                         }
                     } else {
                         Button(
-                            onClick = { viewModel.startScraping() },
+                            onClick = { viewModel.scraping.startScraping() },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary
                             ),
@@ -532,7 +532,7 @@ fun ScrapeScreen(
                         }
 
                         Button(
-                            onClick = { viewModel.clearLogs() },
+                            onClick = { viewModel.scraping.clearLogs() },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
                                 contentColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -552,7 +552,7 @@ fun ScrapeScreen(
 
                 if (viewModel.isScraping) {
                     Button(
-                        onClick = { viewModel.clearLogs() },
+                        onClick = { viewModel.scraping.clearLogs() },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.surfaceVariant,
                             contentColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -715,7 +715,7 @@ fun ScrapeScreen(
                         }
 
                         Button(
-                            onClick = { viewModel.resumeAfterCaptcha() },
+                            onClick = { viewModel.scraping.resumeAfterCaptcha() },
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary
@@ -827,7 +827,7 @@ fun ScrapeScreen(
                     Button(
                         onClick = {
                             CookieManager.getInstance().flush()
-                            viewModel.addLog("Synced manual browser cookies with the scraper.")
+                            viewModel.scraping.addLog("Synced manual browser cookies with the scraper.")
                             viewModel.showManualBrowser = false
                         },
                         shape = RoundedCornerShape(8.dp),

@@ -132,7 +132,7 @@ fun LibraryScreen(
         if (uri != null) {
             importProgressMessage = "Restoring library backup... Please wait..."
             showImportProgressDialog = true
-            viewModel.restoreLibrary(context, uri) { success, msg ->
+            viewModel.library.restoreLibrary(context, uri) { success, msg ->
                 showImportProgressDialog = false
                 importStatusMessage = msg
                 showImportStatusDialog = true
@@ -273,7 +273,7 @@ fun LibraryScreen(
                                     text = { Text("Backup Library") },
                                     onClick = {
                                         showImportBackupMenu = false
-                                        viewModel.backupLibrary(context) { success, pathOrError ->
+                                        viewModel.library.backupLibrary(context) { success, pathOrError ->
                                             if (success) {
                                                 shareFile(context, File(pathOrError), "application/json")
                                             } else {
@@ -315,7 +315,7 @@ fun LibraryScreen(
                             Button(
                                 onClick = {
                                     if (selectedBookIds.isNotEmpty()) {
-                                        viewModel.bulkReScrapeBooks(selectedBookIds) { msg ->
+                                        viewModel.library.bulkReScrapeBooks(selectedBookIds) { msg ->
                                             android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
                                             isBatchMode = false
                                             selectedBookIds = emptySet()
@@ -334,7 +334,7 @@ fun LibraryScreen(
                             Button(
                                 onClick = {
                                     if (selectedBookIds.isNotEmpty()) {
-                                        viewModel.bulkDeleteBooks(selectedBookIds)
+                                        viewModel.library.bulkDeleteBooks(selectedBookIds)
                                         isBatchMode = false
                                         selectedBookIds = emptySet()
                                     }
@@ -403,13 +403,13 @@ fun LibraryScreen(
                     LibraryBookItem(
                         book = book,
                         onRead = { onOpenBook(book.id) },
-                        onListen = { viewModel.startTtsForBook(book) },
+                        onListen = { viewModel.progress.startTtsForBook(book) },
                         onGlossary = {
                             activeGlossaryBook = book
                             showGlossaryDialog = true
                         },
                         onExportEpub = {
-                            viewModel.compileFormat(book, "EPUB") { ok, path ->
+                            viewModel.library.compileFormat(book, "EPUB") { ok, path ->
                                 exportStatusMessage = if (ok) {
                                     "EPUB compiled successfully!\nFile: $path"
                                 } else {
@@ -420,7 +420,7 @@ fun LibraryScreen(
                             }
                         },
                         onExportPdf = {
-                            viewModel.compileFormat(book, "PDF") { ok, path ->
+                            viewModel.library.compileFormat(book, "PDF") { ok, path ->
                                 exportStatusMessage = if (ok) {
                                     "PDF compiled successfully!\nFile: $path"
                                 } else {
@@ -435,12 +435,12 @@ fun LibraryScreen(
                             showDeleteConfirmDialog = true
                         },
                         onRescrapeCorrupted = {
-                            viewModel.rescrapeCorruptedChapters(book.id) { success, message ->
+                            viewModel.scraping.rescrapeCorruptedChapters(book.id) { success, message ->
                                 rescrapeResultMessage = message
                                 showRescrapeResultDialog = true
                             }
                         },
-                        onCheckNewChapters = { viewModel.checkForNewChapters(book) },
+                        onCheckNewChapters = { viewModel.scraping.checkForNewChapters(book) },
                         isCheckingNewChapters = viewModel.isCheckingNewChapters && viewModel.checkingNewChaptersBookId == book.id,
                         isBatchMode = isBatchMode,
                         isSelected = selectedBookIds.contains(book.id),
@@ -510,7 +510,7 @@ fun LibraryScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.deleteBook(activeDeleteBook!!.id)
+                        viewModel.library.deleteBook(activeDeleteBook!!.id)
                         showDeleteConfirmDialog = false
                     },
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
@@ -622,7 +622,7 @@ fun LibraryScreen(
                         showConfigureImportDialog = false
                         importProgressMessage = "Importing local file... Please wait..."
                         showImportProgressDialog = true
-                        viewModel.importLocalFile(context, uri, isEpub = isEpub, customUrl = customUrl) { success, msg ->
+                        viewModel.library.importLocalFile(context, uri, isEpub = isEpub, customUrl = customUrl) { success, msg ->
                             showImportProgressDialog = false
                             importStatusMessage = msg
                             showImportStatusDialog = true
@@ -761,7 +761,7 @@ fun LibraryScreen(
                 Button(
                     onClick = {
                         val bookId = activeEditBook!!.id
-                        viewModel.updateBookDetails(
+                        viewModel.library.updateBookDetails(
                             bookId = bookId,
                             newTitle = editTitle,
                             newAuthor = editAuthor,
@@ -812,7 +812,7 @@ fun LibraryScreen(
                 if (count > 0) {
                     Button(
                         onClick = {
-                            viewModel.startScrapingNewChapters()
+                            viewModel.scraping.startScrapingNewChapters()
                             onNavigateToScrape()
                         }
                     ) {
@@ -1216,7 +1216,7 @@ fun GlossaryManagerDialog(
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                     )
                     Button(
-                        onClick = { viewModel.generateGlossaryWithAi(book) },
+                        onClick = { viewModel.aiFeatures.generateGlossaryWithAi(book) },
                         enabled = !viewModel.isGeneratingGlossary,
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(
